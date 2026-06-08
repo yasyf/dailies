@@ -84,7 +84,7 @@ Reach for **`Grep`** only for material neither tool indexes: literal *content* o
 
 ## Python Style
 
-Target Python 3.12+. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
+Target Python 3.14. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
 
 **Docstrings on the public API only.** User-facing surfaces carry Google-style docstrings. Internal helpers get none. No comments except TODOs, non-obvious workarounds, or disabled code.
 

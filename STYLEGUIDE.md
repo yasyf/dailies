@@ -1,6 +1,6 @@
 # dailies Style Guide
 
-The concrete style rules for `dailies/`. Target Python 3.12+.
+The concrete style rules for `dailies/`. Target Python 3.14.
 
 ## Core Principles
 

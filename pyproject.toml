@@ -15,17 +15,25 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Typing :: Typed",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
+    "anyio>=4.7",
+    "beanie>=2",
     "click>=8",
+    "croniter>=3",
     "loguru>=0.7",
+    "pydantic>=2.11",
+    "textual>=8",
+    "uuid6>=2024.1",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "pyright>=1.1",
     "ruff>=0.8",
+    "ty>=0.0.44",
+    "testcontainers[mongodb]>=4",
+    "docker",
 ]
 
 [project.scripts]
@@ -48,21 +56,38 @@ module-root = ""
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--tb=short", "-q"]
+anyio_mode = "auto"
 markers = [
     "unit: Pure unit tests",
-    "integration: Integration tests",
+    "integration: Integration tests (Docker/Mongo)",
+    "tui: Textual TUI pilot tests (no Mongo)",
 ]
 
+# ty (Astral) is the default type checker — run `uv run ty check dailies`.
+[tool.ty.rules]
+unused-type-ignore-comment = "ignore"
+
+# pyright is kept as a secondary checker (editors / `uvx pyright`) in basic mode.
 [tool.pyright]
-pythonVersion = "3.12"
-typeCheckingMode = "strict"
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
 include = ["dailies"]
 venvPath = "."
 venv = ".venv"
+reportIncompatibleVariableOverride = "none"
+reportUnknownVariableType = "none"
+reportImplicitOverride = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
+reportMissingTypeArgument = "none"
+reportPrivateImportUsage = "none"
+reportUnusedCallResult = "none"
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py314"
 src = [".", "tests"]
 
 [tool.ruff.lint]

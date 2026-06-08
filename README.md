@@ -26,20 +26,44 @@ to a project instead:
 uv add dly
 ```
 
-## Quickstart
+## Commands
 
-Run the tasks scheduled for today:
+`dailies` stores its tasks, workflows, runs, and state in MongoDB. Point it at a
+database, then drive it:
 
 ```bash
-$ uvx dly run
-No tasks configured for today.
+uvx dly db init             # connect to MongoDB and create indexes
+uvx dly run <workflow-id>   # fire a single manual run of a workflow now
+uvx dly tick                # sweep cron-due workflows and fire each due trigger
+uvx dly tui                 # browse tasks → workflows → runs and current state
 ```
 
-Or target a specific date to backfill a missed run:
+`dly tick` is meant to be driven by a single, non-overlapping scheduler entry
+(system cron or launchd).
+
+## Configuration
+
+`dly` reads its MongoDB connection from the environment (no auto-loading — a missing
+variable fails loudly):
+
+| Variable | Example | Purpose |
+| --- | --- | --- |
+| `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string |
+| `MONGODB_DB` | `dailies` | Database name |
+
+A gitignored `.env` ships with localhost defaults. Load it into your shell before
+running:
 
 ```bash
-$ uvx dly run --date 2026-06-08
-No tasks configured for 2026-06-08.
+# bash / zsh
+set -a; source .env; set +a
+```
+
+```fish
+# fish
+for line in (grep -v '^#' .env | grep '=')
+    set -gx (string split -m1 '=' -- $line)
+end
 ```
 
 ## What problems does this solve?

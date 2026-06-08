@@ -2,7 +2,6 @@
 
 [![PyPI](https://img.shields.io/pypi/v/dly.svg)](https://pypi.org/project/dly/)
 [![Python](https://img.shields.io/pypi/pyversions/dly.svg)](https://pypi.org/project/dly/)
-[![Docs](https://img.shields.io/github/actions/workflow/status/yasyf/dailies/docs.yml?branch=main&label=docs)](https://yasyf.github.io/dailies/)
 [![License: PolyForm-NC-1.0.0](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-blue.svg)](https://github.com/yasyf/dailies/blob/main/LICENSE)
 
 Daily automation and scheduled task runner.
@@ -53,7 +52,3 @@ No tasks configured for 2026-06-08.
   failed run tells you which task broke and why.
 - **Local-first testing.** The same `dly run` you schedule is the one you run by
   hand, so there's no separate path to debug.
-
-## Docs
-
-[Read the docs](https://yasyf.github.io/dailies/) for the full guide and API reference.

@@ -10,7 +10,7 @@ dailies/
 │   ├── cli.py        # Click entry point — the `dly` command and subcommands
 │   └── __main__.py   # `python -m dailies` shim
 ├── tests/            # Pytest suite
-├── .github/          # CI, docs, and PyPI release workflows
+├── .github/          # CI and PyPI release workflows
 ├── AGENTS.md         # This file — shared conventions
 └── README.md         # Project overview
 ```
@@ -76,7 +76,7 @@ Reach for **`Grep`** only for material neither tool indexes: literal *content* o
 
 Target Python 3.12+. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
 
-**Docstrings on the public API only.** User-facing surfaces carry Google-style docstrings; they render into the docs site via Great Docs. Internal helpers get none. No comments except TODOs, non-obvious workarounds, or disabled code.
+**Docstrings on the public API only.** User-facing surfaces carry Google-style docstrings. Internal helpers get none. No comments except TODOs, non-obvious workarounds, or disabled code.
 
 @STYLEGUIDE.md
 
@@ -99,8 +99,6 @@ Target Python 3.12+. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
 **Mechanical linting.** CI and hooks handle formatting and import order. Leave `ruff` to them and fix only what needs human judgment. When reviewing code, don't flag mechanical lint violations (line length, whitespace, import order, trailing commas).
 
 **Testing.** The suite lives in `tests/`; run it with `uv run pytest`. Use strict assertions and mock external dependencies while leaving the code under test real.
-
-**Docs.** Any public API change must keep `uv run great-docs build` green; run `uv sync --group docs` first.
 
 **Git.** Commits should be atomic and scoped. One logical change per commit.
 

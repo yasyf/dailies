@@ -33,7 +33,6 @@ dly = "dailies.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yasyf/dailies"
-Documentation = "https://yasyf.github.io/dailies/"
 Repository = "https://github.com/yasyf/dailies"
 Issues = "https://github.com/yasyf/dailies/issues"
 Changelog = "https://github.com/yasyf/dailies/blob/main/CHANGELOG.md"
@@ -68,8 +67,3 @@ src = [".", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
-
-[dependency-groups]
-docs = [
-    "great-docs>=0.13,<0.14",
-]

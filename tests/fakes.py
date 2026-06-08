@@ -17,20 +17,20 @@ from pydantic import JsonValue
 from dailies.models import Action, StatusUpdate, TextBlock, WorkflowId, utcnow
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FakeTask:
     name: str
     uid: UUID
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FakeWorkflow:
     name: str
     version: int
     workflow_id: WorkflowId
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FakeRun:
     status: str
     created_at: datetime

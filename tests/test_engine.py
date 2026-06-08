@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from pymongo import AsyncMongoClient
 from pymongo.errors import DuplicateKeyError
 
 from dailies.documents import Run, Workflow
@@ -19,6 +20,7 @@ from dailies.models import (
     SchemaStr,
     StatusUpdate,
     TaskStatus,
+    Trigger,
     WorkflowDefinition,
     WorkflowId,
 )
@@ -31,7 +33,7 @@ def make_workflow(
     workflow_id: WorkflowId | None = None,
     version: int = 1,
     status: TaskStatus = "active",
-    triggers: list | None = None,
+    triggers: list[Trigger] | None = None,
     created_at: datetime | None = None,
 ) -> Workflow:
     workflow = Workflow(
@@ -49,7 +51,7 @@ def make_workflow(
     return workflow
 
 
-async def test_dispatch_persists_exactly_one_run(mongo: Any) -> None:
+async def test_dispatch_persists_exactly_one_run(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
     with pytest.raises(NotImplementedError):
@@ -57,7 +59,9 @@ async def test_dispatch_persists_exactly_one_run(mongo: Any) -> None:
     assert await Run.find(Run.workflow_id == workflow.workflow_id).count() == 1
 
 
-async def test_dispatch_event_funnels_through_dispatch(mongo: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_dispatch_event_funnels_through_dispatch(
+    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen: list[TriggerFired] = []
 
     async def fake_dispatch(self: Engine, fired: TriggerFired) -> None:
@@ -70,7 +74,9 @@ async def test_dispatch_event_funnels_through_dispatch(mongo: Any, monkeypatch: 
     assert await Run.find_all().count() == 0
 
 
-async def test_fire_due_funnels_one_run_per_due_trigger(mongo: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fire_due_funnels_one_run_per_due_trigger(
+    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
     due = CronTrigger(cron_expression=CronExpr("*/1 * * * *"))
     workflow = make_workflow(triggers=[due], created_at=datetime.now(UTC) - timedelta(minutes=5))
     await workflow.insert()
@@ -86,7 +92,9 @@ async def test_fire_due_funnels_one_run_per_due_trigger(mongo: Any, monkeypatch:
     assert await Run.find_all().count() == 0
 
 
-async def test_fire_due_emits_one_run_per_due_trigger_multi(mongo: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fire_due_emits_one_run_per_due_trigger_multi(
+    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
     triggers = [
         CronTrigger(cron_expression=CronExpr("*/1 * * * *")),
         CronTrigger(cron_expression=CronExpr("*/2 * * * *")),
@@ -103,7 +111,9 @@ async def test_fire_due_emits_one_run_per_due_trigger_multi(mongo: Any, monkeypa
     assert len(seen) == 2
 
 
-async def test_fire_due_skips_inactive_workflows(mongo: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fire_due_skips_inactive_workflows(
+    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
     due = CronTrigger(cron_expression=CronExpr("*/1 * * * *"))
     workflow = make_workflow(status="draft", triggers=[due], created_at=datetime.now(UTC) - timedelta(minutes=5))
     await workflow.insert()
@@ -117,7 +127,7 @@ async def test_fire_due_skips_inactive_workflows(mongo: Any, monkeypatch: pytest
     assert seen == []
 
 
-async def test_workflow_cursor_clamps_stale_created_at(mongo: Any) -> None:
+async def test_workflow_cursor_clamps_stale_created_at(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow(created_at=datetime.now(UTC) - timedelta(days=30))
     await workflow.insert()
     now = datetime.now(UTC)
@@ -125,7 +135,7 @@ async def test_workflow_cursor_clamps_stale_created_at(mongo: Any) -> None:
     assert abs((since - (now - LOOKBACK)).total_seconds()) < 1
 
 
-async def test_workflow_cursor_prefers_latest_run(mongo: Any) -> None:
+async def test_workflow_cursor_prefers_latest_run(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow(created_at=datetime.now(UTC) - timedelta(hours=5))
     await workflow.insert()
     run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
@@ -135,14 +145,14 @@ async def test_workflow_cursor_prefers_latest_run(mongo: Any) -> None:
     assert since > now - timedelta(minutes=1)
 
 
-async def test_workflow_version_unique_constraint(mongo: Any) -> None:
+async def test_workflow_version_unique_constraint(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow_id = WorkflowId(uuid4())
     await make_workflow(workflow_id=workflow_id, version=1).insert()
     with pytest.raises(DuplicateKeyError):
         await make_workflow(workflow_id=workflow_id, version=1).insert()
 
 
-async def test_invoke_agent_raises(mongo: Any) -> None:
+async def test_invoke_agent_raises(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
     run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
@@ -150,7 +160,7 @@ async def test_invoke_agent_raises(mongo: Any) -> None:
         await Engine().invoke_agent(run)
 
 
-async def test_record_status_appends_once(mongo: Any) -> None:
+async def test_record_status_appends_once(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
     run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
@@ -161,7 +171,7 @@ async def test_record_status_appends_once(mongo: Any) -> None:
     assert [u.title for u in reloaded.status_updates] == ["hi"]
 
 
-async def test_record_action_appends_once(mongo: Any) -> None:
+async def test_record_action_appends_once(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
     run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())

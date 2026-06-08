@@ -69,7 +69,7 @@ def test_run_rejects_bad_uuid() -> None:
 def test_tick_reaches_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[object] = []
 
-    async def fake_fire(self: Engine, *, now: object) -> list:
+    async def fake_fire(self: Engine, *, now: object) -> list[object]:
         seen.append(now)
         return []
 

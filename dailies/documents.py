@@ -24,15 +24,6 @@ from dailies.models import (
     utcnow,
 )
 
-__all__ = [
-    "Run",
-    "Task",
-    "TimestampedDocument",
-    "Workflow",
-    "WorkflowState",
-    "document_models",
-]
-
 
 class TimestampedDocument(Document):
     id: UUID = Field(default_factory=new_uuid)
@@ -45,7 +36,7 @@ class TimestampedDocument(Document):
 
     @property
     def uid(self) -> UUID:
-        return UUID(str(self.id))
+        return self.id
 
 
 class Task(TimestampedDocument):

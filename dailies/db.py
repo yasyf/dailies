@@ -10,8 +10,6 @@ from pymongo import AsyncMongoClient
 
 from dailies.documents import document_models
 
-__all__ = ["init_db", "lifespan"]
-
 
 async def init_db() -> AsyncMongoClient[dict[str, Any]]:
     """Connect to MongoDB and initialise beanie.

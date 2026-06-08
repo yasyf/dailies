@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from pymongo import AsyncMongoClient
 
 from dailies.documents import Run, Task, Workflow
 from dailies.interface.presenter import Presenter
@@ -32,7 +33,7 @@ def test_presenter_methods_are_coroutines(name: str) -> None:
     assert inspect.iscoroutinefunction(getattr(TextualPresenter, name))
 
 
-async def test_read_methods_roundtrip(mongo: Any) -> None:
+async def test_read_methods_roundtrip(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     task = Task(name="t", definition=TaskDefinition(user_input="u", description="d", prompt=PromptStr("p")))
     await task.insert()
     workflow_id = WorkflowId(uuid4())

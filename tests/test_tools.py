@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from dailies.models import PromptStr, Trigger, WorkflowId
+from dailies.models import PromptStr, TaskId, Trigger, WorkflowId
 from dailies.runtime import RunContext
 from dailies.tools import build_toolsets
 from dailies.tools.action import Notification
@@ -16,7 +16,9 @@ pytestmark = pytest.mark.unit
 
 
 def context() -> RunContext:
-    return RunContext(workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), run_id=uuid4())
+    return RunContext(
+        workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), task_id=TaskId(uuid4()), run_id=uuid4()
+    )
 
 
 class SampleToolSet(ToolSet):
@@ -123,6 +125,11 @@ VALID_ARGS: dict[str, dict] = {
     "set_state_value": {"key": "k", "value": 1},
     "merge_state": {"patch": {"k": 1}},
     "clear_state": {},
+    "read_task_state": {},
+    "get_task_state_value": {"key": "k"},
+    "set_task_state_value": {"key": "k", "value": 1},
+    "merge_task_state": {"patch": {"k": 1}},
+    "clear_task_state": {},
     "send_email": {"to": "a", "subject": "s", "body": "b"},
     "notify": {"notification": {"channel": "c", "title": "t", "body": "b"}},
     "record_action": {"kind": "k", "payload": {}},

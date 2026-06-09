@@ -28,7 +28,17 @@ from dailies.interview import (
     persist_proposal,
     render_interview,
 )
-from dailies.models import CronTrigger, Exchange, Interview, InterviewTurn, TaskProposal, WorkflowDraft
+from dailies.models import (
+    CronTrigger,
+    EventTrigger,
+    Exchange,
+    Interview,
+    InterviewTurn,
+    ManualTrigger,
+    TaskProposal,
+    Trigger,
+    WorkflowDraft,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIOS = ROOT / "scenarios.md"
@@ -107,12 +117,18 @@ async def simulate(runner: InterviewRunner, provider: AgentProvider, scenario: s
     return Success(scenario, interview, proposal, await persist_proposal(proposal, status="draft"))
 
 
-def render_trigger(trigger: CronTrigger) -> str:
-    return f"cron `{trigger.cron_expression}`"
+def render_trigger(trigger: Trigger) -> str:
+    match trigger:
+        case CronTrigger(cron_expression=expr, timezone=tz):
+            return f"cron `{expr}` ({tz})"
+        case EventTrigger(event_type=event_type, event_key=event_key):
+            return f"event `{event_type}/{event_key}`"
+        case ManualTrigger():
+            return "manual"
 
 
 def render_workflow(draft: WorkflowDraft) -> str:
-    triggers = ", ".join(render_trigger(t) for t in draft_triggers(draft)) or "_event/manual (no cron)_"
+    triggers = ", ".join(render_trigger(t) for t in draft_triggers(draft))
     rules = "\n".join(f"    - {rule}" for rule in draft.rules) or "    - _(none)_"
     return "\n".join(
         [
@@ -121,7 +137,7 @@ def render_workflow(draft: WorkflowDraft) -> str:
             "  - rules:",
             rules,
             f"  - ddl: `{draft.ddl}`",
-            f"  - cron: `{draft.cron_expression or '—'}` → triggers: {triggers}",
+            f"  - triggers: {triggers}",
         ]
     )
 
@@ -144,6 +160,7 @@ def render_success(n: int, outcome: Success) -> str:
             "### Task",
             f"- **description:** {proposal.task.description}",
             f"- **prompt:** {proposal.task.prompt}",
+            f"- **shared_ddl:** `{proposal.task.shared_ddl or '—'}`",
             f"- **persisted:** `{outcome.task.uid}` · status=`{outcome.task.status}`",
             "",
             f"### Workflows ({len(proposal.workflows)})",

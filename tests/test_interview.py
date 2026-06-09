@@ -1,82 +1,88 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from dailies.agent import AgentResult
-from dailies.interview import InterviewRunner, draft_triggers, extract_json
-from dailies.models import CronExpr, CronTrigger, Interview, InterviewTurn, Trigger, WorkflowDraft
-from tests.fakes import ScriptedProvider
+from dailies.interview import InterviewRunner, draft_triggers
+from dailies.models import (
+    CronExpr,
+    CronTrigger,
+    EventTrigger,
+    Interview,
+    InterviewTurn,
+    ManualTrigger,
+    Trigger,
+    WorkflowDraft,
+)
+from tests.fakes import ToolScriptedProvider
 
 pytestmark = pytest.mark.unit
 
 
 async def test_next_turn_parses_question() -> None:
-    payload = json.dumps({"finished": False, "question": "When should it run?"})
-    runner = InterviewRunner(ScriptedProvider([AgentResult(payload, ok=True)]))
-    turn = await runner.next_turn(Interview(scenario="email me a digest"))
+    provider = ToolScriptedProvider([{"value": {"finished": False, "question": "When should it run?"}}])
+    turn = await InterviewRunner(provider).next_turn(Interview(scenario="email me a digest"))
     assert turn == InterviewTurn(finished=False, question="When should it run?")
 
 
 async def test_next_turn_parses_finished() -> None:
-    payload = json.dumps({"finished": True, "question": None})
-    runner = InterviewRunner(ScriptedProvider([AgentResult(payload, ok=True)]))
-    assert await runner.next_turn(Interview(scenario="x")) == InterviewTurn(finished=True, question=None)
+    provider = ToolScriptedProvider([{"value": {"finished": True, "question": None}}])
+    turn = await InterviewRunner(provider).next_turn(Interview(scenario="x"))
+    assert turn == InterviewTurn(finished=True, question=None)
+
+
+PROPOSAL = {
+    "task": {
+        "name": "Digest",
+        "description": "Daily digest",
+        "user_input": "email me a digest",
+        "prompt": "summarize the day",
+        "shared_ddl": "CREATE TABLE totals (sent INTEGER)",
+    },
+    "workflows": [
+        {
+            "name": "send",
+            "prompt": "send the digest",
+            "rules": ["be brief"],
+            "ddl": "CREATE TABLE sent (day TEXT)",
+            "triggers": [{"kind": "cron", "cron_expression": "0 9 * * *", "timezone": "America/New_York"}],
+        }
+    ],
+}
 
 
 async def test_synthesize_parses_proposal() -> None:
-    proposal = {
-        "task": {
-            "name": "Digest",
-            "description": "Daily digest",
-            "user_input": "email me a digest",
-            "prompt": "summarize the day",
-        },
-        "workflows": [
-            {
-                "name": "send",
-                "prompt": "send the digest",
-                "rules": ["be brief"],
-                "ddl": "CREATE TABLE sent (day TEXT)",
-                "cron_expression": "0 9 * * *",
-            }
-        ],
-    }
-    runner = InterviewRunner(ScriptedProvider([AgentResult(json.dumps(proposal), ok=True)]))
-    result = await runner.synthesize(Interview(scenario="email me a digest"))
+    provider = ToolScriptedProvider([{"value": PROPOSAL}])
+    result = await InterviewRunner(provider).synthesize(Interview(scenario="email me a digest"))
     assert result.task.name == "Digest"
     assert result.task.user_input == "email me a digest"
+    assert result.task.shared_ddl == "CREATE TABLE totals (sent INTEGER)"
     assert [w.name for w in result.workflows] == ["send"]
     assert result.workflows[0].rules == ["be brief"]
-    assert result.workflows[0].cron_expression == "0 9 * * *"
+    assert result.workflows[0].triggers == [
+        CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="America/New_York")
+    ]
+
+
+async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> None:
+    provider = ToolScriptedProvider([{"value": PROPOSAL}])
+    await InterviewRunner(provider).synthesize(Interview(scenario="email me a digest"))
+    request = provider.requests[0]
+    assert [spec.name for spec in request.tools] == ["submit"]
+    schema = request.tools[0].input_schema
+    assert set(schema["properties"]) == {"value"}
+    assert "$defs" in schema  # the TaskProposal model rides as structured tool schema...
+    assert '"properties"' not in request.system  # ...not as a free-hand JSON dump in the prompt
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
+    "trigger",
     [
-        pytest.param('{"finished": true, "question": null}', {"finished": True, "question": None}, id="bare"),
-        pytest.param(
-            '```json\n{"finished": true, "question": null}\n```', {"finished": True, "question": None}, id="fenced"
-        ),
-        pytest.param(
-            'Sure! Here it is: {"finished": false, "question": "When?"} Hope that helps.',
-            {"finished": False, "question": "When?"},
-            id="prose",
-        ),
+        pytest.param(CronTrigger(cron_expression=CronExpr("0 9 * * *")), id="cron-utc"),
+        pytest.param(CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="America/New_York"), id="cron-tz"),
+        pytest.param(EventTrigger(event_type="email", event_key="abc"), id="event"),
+        pytest.param(ManualTrigger(), id="manual"),
     ],
 )
-def test_extract_json_tolerates_wrapping(text: str, expected: dict[str, object]) -> None:
-    assert json.loads(extract_json(text)) == expected
-
-
-@pytest.mark.parametrize(
-    ("cron", "expected"),
-    [
-        pytest.param("0 9 * * *", [CronTrigger(cron_expression=CronExpr("0 9 * * *"))], id="cron"),
-        pytest.param(None, [], id="none"),
-    ],
-)
-def test_draft_triggers(cron: str | None, expected: list[Trigger]) -> None:
-    draft = WorkflowDraft(name="w", prompt="p", rules=[], ddl="CREATE TABLE t (x TEXT)", cron_expression=cron)
-    assert draft_triggers(draft) == expected
+def test_draft_triggers(trigger: Trigger) -> None:
+    draft = WorkflowDraft(name="w", prompt="p", rules=[], ddl="CREATE TABLE t (x TEXT)", triggers=[trigger])
+    assert draft_triggers(draft) == [trigger]

@@ -49,6 +49,7 @@ async def test_read_methods_roundtrip(mongo: AsyncMongoClient[dict[str, Any]]) -
     run = Run(
         workflow_doc_id=workflow.uid,
         workflow_id=workflow_id,
+        task_id=task.uid,
         trigger=ManualTrigger(),
         status_updates=[StatusUpdate(title="s1"), StatusUpdate(title="s2")],
         actions=[Action(kind="email", target="a@b.com")],

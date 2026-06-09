@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from croniter import croniter
 from loguru import logger
@@ -12,7 +13,6 @@ from dailies.agent import AgentProvider, AgentRequest, ClaudeAgentSDKProvider
 from dailies.documents import Run, Workflow
 from dailies.models import (
     Action,
-    CronExpr,
     CronTrigger,
     EventTrigger,
     RunStatus,
@@ -39,9 +39,9 @@ class WorkflowNotFound(LookupError):
     pass
 
 
-def cron_due(expression: CronExpr, *, now: datetime, since: datetime) -> bool:
-    """Whether a cron slot falls in the half-open window ``(since, now]`` (UTC)."""
-    return croniter(expression, since).get_next(datetime) <= now
+def cron_due(trigger: CronTrigger, *, now: datetime, since: datetime) -> bool:
+    """Whether a cron slot falls in the half-open window ``(since, now]``, evaluated in the trigger's timezone."""
+    return croniter(trigger.cron_expression, since.astimezone(ZoneInfo(trigger.timezone))).get_next(datetime) <= now
 
 
 async def workflow_cursor(workflow: Workflow, *, now: datetime) -> datetime:
@@ -110,7 +110,12 @@ class Engine:
 
     async def dispatch(self, fired: TriggerFired) -> Run:
         workflow = await self.active_workflow(fired.workflow_id)
-        run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=fired.trigger)
+        run = Run(
+            workflow_doc_id=workflow.uid,
+            workflow_id=workflow.workflow_id,
+            task_id=workflow.task_id,
+            trigger=fired.trigger,
+        )
         await run.insert()
         emit(RunCreated(run_id=run.uid, workflow_id=run.workflow_id))
         await self.invoke_agent(run)
@@ -127,14 +132,19 @@ class Engine:
                 [
                     await self.dispatch(TriggerFired(workflow.workflow_id, trigger))
                     for trigger in workflow.triggers
-                    if isinstance(trigger, CronTrigger) and cron_due(trigger.cron_expression, now=now, since=since)
+                    if isinstance(trigger, CronTrigger) and cron_due(trigger, now=now, since=since)
                 ]
             )
         return runs
 
     def build_toolsets(self, run: Run) -> tuple[ToolSet, ...]:
         return tools.build_toolsets(
-            RunContext(workflow_id=run.workflow_id, workflow_doc_id=run.workflow_doc_id, run_id=run.uid)
+            RunContext(
+                workflow_id=run.workflow_id,
+                workflow_doc_id=run.workflow_doc_id,
+                task_id=run.task_id,
+                run_id=run.uid,
+            )
         )
 
     async def invoke_agent(self, run: Run) -> None:

@@ -54,6 +54,19 @@ class ScriptedProvider:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolScriptedProvider:
+    """Fake provider that drives the request's submit tool with scripted args, like a real tool-calling provider."""
+
+    calls: list[dict[str, JsonValue]]
+    requests: list[AgentRequest] = field(default_factory=list)
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        self.requests.append(request)
+        await next(spec for spec in request.tools if spec.name == "submit").invoke(self.calls.pop(0))
+        return AgentResult(text="", ok=True)
+
+
+@dataclass(frozen=True, slots=True)
 class FakeTask:
     name: str
     uid: TaskId

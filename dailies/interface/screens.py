@@ -10,7 +10,26 @@ from textual.widgets import Button, Footer, Header, Input, Static
 from textual.worker import Worker, WorkerState
 
 from dailies.interview import InterviewError, InterviewRunner, persist_proposal
-from dailies.models import Exchange, Interview, TaskProposal, TaskStatus
+from dailies.models import (
+    CronTrigger,
+    EventTrigger,
+    Exchange,
+    Interview,
+    ManualTrigger,
+    TaskProposal,
+    TaskStatus,
+    Trigger,
+)
+
+
+def render_trigger(trigger: Trigger) -> str:
+    match trigger:
+        case CronTrigger(cron_expression=expr, timezone=tz):
+            return f"cron {expr} ({tz})"
+        case EventTrigger(event_type=event_type, event_key=event_key):
+            return f"event {event_type}/{event_key}"
+        case ManualTrigger():
+            return "manual"
 
 
 class InterviewScreen(Screen[None]):
@@ -101,7 +120,7 @@ class ReviewScreen(Screen[None]):
                 yield Static(f"  prompt: {wf.prompt}")
                 yield Static(f"  rules: {', '.join(wf.rules) or '—'}")
                 yield Static(f"  ddl: {wf.ddl}")
-                yield Static(f"  cron: {wf.cron_expression or '—'}")
+                yield Static(f"  triggers: {', '.join(render_trigger(t) for t in wf.triggers) or '—'}")
         with Horizontal(id="buttons"):
             yield Button("Approve", id="approve", variant="success")
             yield Button("Save draft", id="save")

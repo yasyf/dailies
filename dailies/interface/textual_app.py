@@ -12,17 +12,13 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from dailies.documents import Run, Task, Workflow, WorkflowState
 from dailies.interface.presenter import Presenter
-from dailies.interface.screens import InterviewScreen
+from dailies.interface.screens import InterviewScreen, render_trigger
 from dailies.interview import InterviewRunner
 from dailies.models import (
     Block,
-    CronTrigger,
-    EventTrigger,
     ImageBlock,
-    ManualTrigger,
     TaskId,
     TextBlock,
-    Trigger,
     WorkflowId,
 )
 
@@ -33,16 +29,6 @@ async def mount_block(container: VerticalScroll, block: Block) -> None:
             await container.mount(Static(text))
         case ImageBlock(url=url):
             await container.mount(Static(f"[image] {url}"))
-
-
-def render_trigger(trigger: Trigger) -> str:
-    match trigger:
-        case CronTrigger(cron_expression=expr):
-            return f"cron {expr}"
-        case EventTrigger(event_type=event_type, event_key=event_key):
-            return f"event {event_type}/{event_key}"
-        case ManualTrigger():
-            return "manual"
 
 
 def workflow_detail_widgets(workflow: Workflow) -> list[Static]:

@@ -52,6 +52,7 @@ class StoredModel(BaseModel):
 class CronTrigger(FrozenModel):
     kind: Literal["cron"] = "cron"
     cron_expression: CronExpr
+    timezone: str = "UTC"
 
 
 class EventTrigger(FrozenModel):
@@ -126,6 +127,7 @@ class TaskDraft(FrozenModel):
     description: str
     user_input: str
     prompt: str
+    shared_ddl: str | None = None
 
 
 class WorkflowDraft(FrozenModel):
@@ -133,7 +135,7 @@ class WorkflowDraft(FrozenModel):
     prompt: str
     rules: list[str] = Field(default_factory=list)
     ddl: str
-    cron_expression: str | None
+    triggers: Annotated[list[Trigger], Field(min_length=1)]
 
 
 class TaskProposal(FrozenModel):

@@ -43,6 +43,7 @@ class TimestampedDocument(Document):
 class Task(TimestampedDocument):
     name: str
     definition: TaskDefinition
+    shared_ddl: SchemaStr | None = None
     status: TaskStatus = "draft"
     summary: str | None = None
     stop_conditions: list[StopCondition] = Field(default_factory=list)
@@ -79,6 +80,7 @@ class Workflow(TimestampedDocument):
 class Run(TimestampedDocument):
     workflow_doc_id: UUID
     workflow_id: WorkflowId
+    task_id: TaskId
     trigger: Trigger
     status: RunStatus = "pending"
     status_updates: list[StatusUpdate] = Field(default_factory=list)
@@ -102,5 +104,15 @@ class WorkflowState(TimestampedDocument):
         indexes = [IndexModel([("workflow_id", ASCENDING)], unique=True)]
 
 
+class TaskState(TimestampedDocument):
+    task_id: TaskId
+    ddl: SchemaStr
+    data: dict[str, JsonValue] = Field(default_factory=dict)
+
+    class Settings:
+        name = "task_state"
+        indexes = [IndexModel([("task_id", ASCENDING)], unique=True)]
+
+
 def document_models() -> list[type[Document]]:
-    return [Task, Workflow, Run, WorkflowState]
+    return [Task, Workflow, Run, WorkflowState, TaskState]

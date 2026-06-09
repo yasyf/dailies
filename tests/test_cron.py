@@ -5,11 +5,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from dailies.engine import cron_due
-from dailies.models import CronExpr
+from dailies.models import CronExpr, CronTrigger
 
 pytestmark = pytest.mark.unit
 
-NINE_AM = CronExpr("0 9 * * *")
+NINE_AM = CronTrigger(cron_expression=CronExpr("0 9 * * *"))
 BASE = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
 
 
@@ -33,3 +33,11 @@ def test_cron_due_is_half_open_across_adjacent_sweeps() -> None:
     second = cron_due(NINE_AM, now=BASE + timedelta(minutes=5), since=BASE)
     assert first is True
     assert second is False
+
+
+def test_cron_due_honors_timezone() -> None:
+    # 0 9 in America/New_York on 2026-06-08 (EDT, UTC-4) fires at 13:00 UTC.
+    ny = CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="America/New_York")
+    since = datetime(2026, 6, 8, 8, 0, tzinfo=UTC)
+    assert cron_due(ny, now=datetime(2026, 6, 8, 12, 59, tzinfo=UTC), since=since) is False
+    assert cron_due(ny, now=datetime(2026, 6, 8, 13, 0, tzinfo=UTC), since=since) is True

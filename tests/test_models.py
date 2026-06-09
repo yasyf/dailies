@@ -7,6 +7,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from dailies.models import (
     Action,
+    CronExpr,
     CronTrigger,
     EventTrigger,
     ManualTrigger,
@@ -24,7 +25,10 @@ stop_adapter: TypeAdapter[StopCondition] = TypeAdapter(StopCondition)
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
-        pytest.param({"kind": "cron", "cron_expression": "*/5 * * * *"}, CronTrigger, id="cron"),
+        pytest.param({"kind": "cron", "cron_expression": "*/5 * * * *", "timezone": "UTC"}, CronTrigger, id="cron"),
+        pytest.param(
+            {"kind": "cron", "cron_expression": "0 9 * * *", "timezone": "America/New_York"}, CronTrigger, id="cron-tz"
+        ),
         pytest.param({"kind": "event", "event_type": "email", "event_key": "abc"}, EventTrigger, id="event"),
         pytest.param({"kind": "manual"}, ManualTrigger, id="manual"),
     ],
@@ -33,6 +37,10 @@ def test_trigger_discriminated_roundtrip(payload: dict[str, str], expected: type
     parsed = trigger_adapter.validate_python(payload)
     assert isinstance(parsed, expected)
     assert trigger_adapter.dump_python(parsed) == payload
+
+
+def test_cron_trigger_timezone_defaults_utc() -> None:
+    assert CronTrigger(cron_expression=CronExpr("0 9 * * *")).timezone == "UTC"
 
 
 def test_unknown_trigger_kind_rejected() -> None:

@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from dailies.agent import AgentProvider, AgentResult, ClaudeAgentSDKProvider, adapt
-from dailies.models import WorkflowId
+from dailies.models import TaskId, WorkflowId
 from dailies.runtime import RunContext
 from dailies.tools.base import ToolSet, ToolSpec, tool
 from tests.fakes import FakeProvider
@@ -29,7 +29,9 @@ async def raises(args: dict[str, Any]) -> Any:
 
 
 def add_spec() -> ToolSpec:
-    context = RunContext(workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), run_id=uuid4())
+    context = RunContext(
+        workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), task_id=TaskId(uuid4()), run_id=uuid4()
+    )
     return AddToolSet(context).get_tools()[0].to_spec()
 
 

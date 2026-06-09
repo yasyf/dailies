@@ -14,14 +14,20 @@ pytestmark = pytest.mark.integration
 
 def make_proposal() -> TaskProposal:
     return TaskProposal(
-        task=TaskDraft(name="Digest", description="Daily digest", user_input="email me a digest", prompt="summarize"),
+        task=TaskDraft(
+            name="Digest",
+            description="Daily digest",
+            user_input="email me a digest",
+            prompt="summarize",
+            shared_ddl="CREATE TABLE totals (sent INTEGER)",
+        ),
         workflows=[
             WorkflowDraft(
                 name="send",
                 prompt="send the digest",
                 rules=["be brief"],
                 ddl="CREATE TABLE sent (day TEXT)",
-                cron_expression="0 9 * * *",
+                triggers=[CronTrigger(cron_expression=CronExpr("0 9 * * *"))],
             )
         ],
     )
@@ -35,6 +41,7 @@ async def test_persist_proposal_active(mongo: AsyncMongoClient[dict[str, Any]]) 
     assert stored is not None
     assert stored.definition.user_input == "email me a digest"
     assert stored.definition.prompt == "summarize"
+    assert stored.shared_ddl == "CREATE TABLE totals (sent INTEGER)"
 
     workflows = await Workflow.find(Workflow.task_id == task.uid).to_list()
     assert len(workflows) == 1

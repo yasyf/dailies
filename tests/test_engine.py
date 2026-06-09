@@ -141,7 +141,12 @@ async def test_workflow_cursor_clamps_stale_created_at(mongo: AsyncMongoClient[d
 async def test_workflow_cursor_prefers_latest_run(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow(created_at=datetime.now(UTC) - timedelta(hours=5))
     await workflow.insert()
-    run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        trigger=ManualTrigger(),
+    )
     await run.insert()
     now = datetime.now(UTC)
     since = await workflow_cursor(workflow, now=now)
@@ -158,7 +163,12 @@ async def test_workflow_version_unique_constraint(mongo: AsyncMongoClient[dict[s
 async def test_invoke_agent_delegates(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
-    run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        trigger=ManualTrigger(),
+    )
     await run.insert()
     provider = FakeProvider(AgentResult("done", ok=True))
     engine = Engine(provider=provider)
@@ -176,7 +186,12 @@ async def test_invoke_agent_delegates(mongo: AsyncMongoClient[dict[str, Any]]) -
 async def test_invoke_agent_marks_failure(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
-    run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        trigger=ManualTrigger(),
+    )
     await run.insert()
     engine = Engine(provider=FakeProvider(AgentResult("oops", ok=False)))
     await engine.invoke_agent(run)
@@ -188,7 +203,12 @@ async def test_invoke_agent_marks_failure(mongo: AsyncMongoClient[dict[str, Any]
 async def test_record_status_appends_once(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
-    run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        trigger=ManualTrigger(),
+    )
     await run.insert()
     await Engine().record_status(run, StatusUpdate(title="hi"))
     reloaded = await Run.get(run.uid)
@@ -199,7 +219,12 @@ async def test_record_status_appends_once(mongo: AsyncMongoClient[dict[str, Any]
 async def test_record_action_appends_once(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
-    run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        trigger=ManualTrigger(),
+    )
     await run.insert()
     await Engine().record_action(run, Action(kind="email", target="a@b.com"))
     reloaded = await Run.get(run.uid)

@@ -15,7 +15,22 @@ from uuid import UUID, uuid4
 from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
-from dailies.models import Action, StatusUpdate, TaskId, TextBlock, WorkflowId, utcnow
+from dailies.models import (
+    Action,
+    CronExpr,
+    CronTrigger,
+    PromptStr,
+    SchemaStr,
+    StatusUpdate,
+    TaskDefinition,
+    TaskId,
+    TaskStatus,
+    TextBlock,
+    Trigger,
+    WorkflowDefinition,
+    WorkflowId,
+    utcnow,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +57,10 @@ class ScriptedProvider:
 class FakeTask:
     name: str
     uid: TaskId
+    definition: TaskDefinition = field(
+        default_factory=lambda: TaskDefinition(user_input="i", description="d", prompt=PromptStr("p"))
+    )
+    status: TaskStatus = "active"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +68,10 @@ class FakeWorkflow:
     name: str
     version: int
     workflow_id: WorkflowId
+    definition: WorkflowDefinition
+    ddl: SchemaStr
+    status: TaskStatus
+    triggers: list[Trigger]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +87,23 @@ class FakeRun:
 class FakePresenter:
     def __init__(self) -> None:
         self.workflow_id = WorkflowId(uuid4())
-        self.task = FakeTask(name="Daily digest", uid=TaskId(uuid4()))
-        self.workflow = FakeWorkflow(name="digest-workflow", version=1, workflow_id=self.workflow_id)
+        self.task = FakeTask(
+            name="Daily digest",
+            uid=TaskId(uuid4()),
+            definition=TaskDefinition(
+                user_input="email me a digest", description="Send a daily digest", prompt=PromptStr("summarize the day")
+            ),
+            status="active",
+        )
+        self.workflow = FakeWorkflow(
+            name="digest-workflow",
+            version=1,
+            workflow_id=self.workflow_id,
+            definition=WorkflowDefinition(prompt=PromptStr("send the digest"), rules=["be brief"]),
+            ddl=SchemaStr("CREATE TABLE sent (day TEXT)"),
+            status="active",
+            triggers=[CronTrigger(cron_expression=CronExpr("0 9 * * *"))],
+        )
         self.run = FakeRun(
             status="succeeded",
             created_at=utcnow(),
@@ -77,6 +115,9 @@ class FakePresenter:
 
     async def list_tasks(self) -> Sequence[FakeTask]:
         return [self.task]
+
+    async def get_task(self, task_id: TaskId) -> FakeTask:
+        return self.task
 
     async def list_workflows(self, task_id: TaskId) -> Sequence[FakeWorkflow]:
         return [self.workflow]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import ClassVar
 from uuid import UUID
 
@@ -14,7 +14,17 @@ from dailies.documents import Run, Task, Workflow, WorkflowState
 from dailies.interface.presenter import Presenter
 from dailies.interface.screens import InterviewScreen
 from dailies.interview import InterviewRunner
-from dailies.models import Block, ImageBlock, TaskId, TextBlock, WorkflowId
+from dailies.models import (
+    Block,
+    CronTrigger,
+    EventTrigger,
+    ImageBlock,
+    ManualTrigger,
+    TaskId,
+    TextBlock,
+    Trigger,
+    WorkflowId,
+)
 
 
 async def mount_block(container: VerticalScroll, block: Block) -> None:
@@ -25,9 +35,44 @@ async def mount_block(container: VerticalScroll, block: Block) -> None:
             await container.mount(Static(f"[image] {url}"))
 
 
+def render_trigger(trigger: Trigger) -> str:
+    match trigger:
+        case CronTrigger(cron_expression=expr):
+            return f"cron {expr}"
+        case EventTrigger(event_type=event_type, event_key=event_key):
+            return f"event {event_type}/{event_key}"
+        case ManualTrigger():
+            return "manual"
+
+
+def workflow_detail_widgets(workflow: Workflow) -> list[Static]:
+    return [
+        Static(f"\nWorkflow: {workflow.name} v{workflow.version}  ({workflow.status})"),
+        Static(f"  prompt: {workflow.definition.prompt}"),
+        Static(f"  rules: {', '.join(workflow.definition.rules) or '—'}"),
+        Static(f"  ddl: {workflow.ddl}"),
+        Static(f"  triggers: {', '.join(render_trigger(t) for t in workflow.triggers) or '—'}"),
+    ]
+
+
+def task_detail_widgets(task: Task, workflows: Sequence[Workflow]) -> list[Static]:
+    return [
+        Static(f"Task: {task.name}  ({task.status})"),
+        Static(task.definition.description),
+        Static(f"Prompt: {task.definition.prompt}"),
+        *(widget for workflow in workflows for widget in workflow_detail_widgets(workflow)),
+    ]
+
+
 class TextualPresenter:
     async def list_tasks(self) -> list[Task]:
         return await Task.find_all().to_list()
+
+    async def get_task(self, task_id: TaskId) -> Task:
+        task = await Task.get(task_id)
+        if task is None:
+            raise LookupError(task_id)
+        return task
 
     async def list_workflows(self, task_id: TaskId) -> list[Workflow]:
         return await Workflow.find(Workflow.task_id == task_id).to_list()
@@ -75,7 +120,31 @@ class TaskListScreen(Screen[None]):
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         if (index := event.list_view.index) is not None:
-            self.app.push_screen(WorkflowListScreen(self.presenter, self.tasks[index].uid))
+            self.app.push_screen(TaskDetailScreen(self.presenter, self.tasks[index].uid))
+
+
+class TaskDetailScreen(Screen[None]):
+    """Read-only layout for one task: its prompt plus every workflow's prompt, rules, ddl, and triggers."""
+
+    BINDINGS: ClassVar = [("w", "workflows", "Workflow runs")]
+
+    def __init__(self, presenter: Presenter, task_id: TaskId) -> None:
+        super().__init__()
+        self.presenter = presenter
+        self.task_id = task_id
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield VerticalScroll(id="detail")
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        task = await self.presenter.get_task(self.task_id)
+        workflows = await self.presenter.list_workflows(self.task_id)
+        await self.query_one("#detail", VerticalScroll).mount(*task_detail_widgets(task, workflows))
+
+    def action_workflows(self) -> None:
+        self.app.push_screen(WorkflowListScreen(self.presenter, self.task_id))
 
 
 class WorkflowListScreen(Screen[None]):

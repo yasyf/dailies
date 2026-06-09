@@ -6,6 +6,7 @@
 
 # Local environment
 .env*
+scratch/
 
 # Claude Code
 .context/

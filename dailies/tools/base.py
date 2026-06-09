@@ -57,6 +57,29 @@ class Tool:
         )
 
 
+@dataclass(slots=True)
+class StructuredSink[T: BaseModel]:
+    """Captures one validated result of type ``T`` from a ``submit`` tool call.
+
+    Pass any model instead of hand-writing a per-type capture toolset: the model
+    becomes the tool's input schema and validates the call. Satisfies the shape
+    an agent runner needs (``result`` plus ``get_tools``).
+    """
+
+    output: type[T]
+    result: T | None = None
+
+    def get_tools(self) -> list[Tool]:
+        sink = self
+
+        async def submit(value: T) -> None:
+            sink.result = value
+
+        # T is unresolvable at runtime under PEP 563, so pin the annotation to the concrete model.
+        submit.__annotations__ = {"value": self.output, "return": type(None)}
+        return [Tool(name="submit", description=f"Submit the final {self.output.__name__}.", fn=submit)]
+
+
 class ToolSet(ABC):
     @staticmethod
     def tool(fn: Callable[P, Coroutine[Any, Any, T]]) -> Callable[P, Coroutine[Any, Any, T]]:

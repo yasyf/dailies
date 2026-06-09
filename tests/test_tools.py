@@ -5,11 +5,11 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from dailies.models import PromptStr, TaskId, Trigger, WorkflowId
+from dailies.models import InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId
 from dailies.runtime import RunContext
 from dailies.tools import build_toolsets
 from dailies.tools.action import Notification
-from dailies.tools.base import ToolSet, tool
+from dailies.tools.base import StructuredSink, ToolSet, tool
 from dailies.tools.state import StateToolSet
 
 pytestmark = pytest.mark.unit
@@ -140,6 +140,15 @@ VALID_ARGS: dict[str, dict] = {
     "fetch_url": {"url": "u"},
     "search_web": {"query": "q"},
 }
+
+
+async def test_structured_sink_captures_validated_model() -> None:
+    sink = StructuredSink(InterviewTurn)
+    spec = sink.get_tools()[0].to_spec()
+    assert spec.name == "submit"
+    assert set(spec.input_schema["properties"]) == {"value"}
+    await spec.invoke({"value": {"finished": True, "question": None}})
+    assert sink.result == InterviewTurn(finished=True, question=None)
 
 
 async def test_state_stub_raises_not_implemented() -> None:

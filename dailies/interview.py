@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 from pydantic import BaseModel
 
@@ -23,7 +22,7 @@ from dailies.models import (
     WorkflowId,
     new_uuid,
 )
-from dailies.tools.base import Tool, ToolSet, tool
+from dailies.tools.base import StructuredSink
 
 TURN_SYSTEM = (
     "You are running a short onboarding interview to design a recurring automated task for the user. "
@@ -66,33 +65,7 @@ class InterviewError(Exception):
     """The agent failed to produce a usable interview response."""
 
 
-@dataclass(slots=True)
-class TurnSink(ToolSet):
-    result: InterviewTurn | None = None
-
-    @tool
-    async def submit(self, value: InterviewTurn) -> None:
-        """Submit the next interview turn."""
-        self.result = value
-
-
-@dataclass(slots=True)
-class ProposalSink(ToolSet):
-    result: TaskProposal | None = None
-
-    @tool
-    async def submit(self, value: TaskProposal) -> None:
-        """Submit the synthesized task proposal."""
-        self.result = value
-
-
-class Sink[T](Protocol):
-    result: T | None
-
-    def get_tools(self) -> list[Tool]: ...
-
-
-async def collect[T: BaseModel](provider: AgentProvider, sink: Sink[T], *, system: str, prompt: str) -> T:
+async def collect[T: BaseModel](provider: AgentProvider, sink: StructuredSink[T], *, system: str, prompt: str) -> T:
     result = await provider.run(
         AgentRequest(
             system=f"{system}\n\nCall the submit tool exactly once with the structured result; do not reply in prose.",
@@ -122,10 +95,14 @@ class InterviewRunner:
     provider: AgentProvider
 
     async def next_turn(self, interview: Interview) -> InterviewTurn:
-        return await collect(self.provider, TurnSink(), system=TURN_SYSTEM, prompt=render_interview(interview))
+        return await collect(
+            self.provider, StructuredSink(InterviewTurn), system=TURN_SYSTEM, prompt=render_interview(interview)
+        )
 
     async def synthesize(self, interview: Interview) -> TaskProposal:
-        return await collect(self.provider, ProposalSink(), system=SYNTHESIS_SYSTEM, prompt=render_interview(interview))
+        return await collect(
+            self.provider, StructuredSink(TaskProposal), system=SYNTHESIS_SYSTEM, prompt=render_interview(interview)
+        )
 
 
 async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Task:

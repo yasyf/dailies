@@ -8,13 +8,24 @@ keep the pilot test independent of MongoDB.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
 
 from pydantic import JsonValue
 
+from dailies.agent import AgentRequest, AgentResult
 from dailies.models import Action, StatusUpdate, TextBlock, WorkflowId, utcnow
+
+
+@dataclass(frozen=True, slots=True)
+class FakeProvider:
+    result: AgentResult
+    requests: list[AgentRequest] = field(default_factory=list)
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        self.requests.append(request)
+        return self.result
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,8 +8,9 @@ import pytest
 from pymongo import AsyncMongoClient
 from pymongo.errors import DuplicateKeyError
 
+from dailies.agent import AgentResult
 from dailies.documents import Run, Workflow
-from dailies.engine import LOOKBACK, Engine, TriggerFired, workflow_cursor
+from dailies.engine import LOOKBACK, SYSTEM, Engine, TriggerFired, workflow_cursor
 from dailies.models import (
     Action,
     CronExpr,
@@ -24,6 +25,7 @@ from dailies.models import (
     WorkflowDefinition,
     WorkflowId,
 )
+from tests.fakes import FakeProvider
 
 pytestmark = pytest.mark.integration
 
@@ -54,8 +56,8 @@ def make_workflow(
 async def test_dispatch_persists_exactly_one_run(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
-    with pytest.raises(NotImplementedError):
-        await Engine().dispatch(TriggerFired(workflow.workflow_id, ManualTrigger()))
+    engine = Engine(provider=FakeProvider(AgentResult("ok", ok=True)))
+    await engine.dispatch(TriggerFired(workflow.workflow_id, ManualTrigger()))
     assert await Run.find(Run.workflow_id == workflow.workflow_id).count() == 1
 
 
@@ -152,12 +154,34 @@ async def test_workflow_version_unique_constraint(mongo: AsyncMongoClient[dict[s
         await make_workflow(workflow_id=workflow_id, version=1).insert()
 
 
-async def test_invoke_agent_raises(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+async def test_invoke_agent_delegates(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()
     run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
-    with pytest.raises(NotImplementedError):
-        await Engine().invoke_agent(run)
+    await run.insert()
+    provider = FakeProvider(AgentResult("done", ok=True))
+    engine = Engine(provider=provider)
+    await engine.invoke_agent(run)
+    reloaded = await Run.get(run.uid)
+    assert reloaded is not None
+    assert reloaded.status == "succeeded"
+    assert [block.text for update in reloaded.status_updates for block in update.blocks] == ["done"]
+    request = provider.requests[0]
+    assert request.system == SYSTEM
+    assert request.prompt == workflow.definition.prompt
+    assert len(request.tools) == sum(len(ts.get_tools()) for ts in engine.build_toolsets(run))
+
+
+async def test_invoke_agent_marks_failure(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    workflow = make_workflow()
+    await workflow.insert()
+    run = Run(workflow_doc_id=workflow.uid, workflow_id=workflow.workflow_id, trigger=ManualTrigger())
+    await run.insert()
+    engine = Engine(provider=FakeProvider(AgentResult("oops", ok=False)))
+    await engine.invoke_agent(run)
+    reloaded = await Run.get(run.uid)
+    assert reloaded is not None
+    assert reloaded.status == "failed"
 
 
 async def test_record_status_appends_once(mongo: AsyncMongoClient[dict[str, Any]]) -> None:

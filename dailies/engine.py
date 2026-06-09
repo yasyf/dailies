@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -8,13 +8,16 @@ from croniter import croniter
 from loguru import logger
 
 from dailies import tools
+from dailies.agent import AgentProvider, AgentRequest, ClaudeAgentSDKProvider
 from dailies.documents import Run, Workflow
 from dailies.models import (
     Action,
     CronExpr,
     CronTrigger,
     EventTrigger,
+    RunStatus,
     StatusUpdate,
+    TextBlock,
     Trigger,
     WorkflowId,
 )
@@ -24,6 +27,12 @@ from dailies.tools import ToolSet
 # First-sweep lookback: a long-idle workflow fires at most one slot within this window
 # (fire-at-most-once-per-sweep, no catch-up). Tune to match the dly tick cadence.
 LOOKBACK = timedelta(days=1)
+
+SYSTEM = (
+    "You are the dailies workflow runner. Execute the user's workflow prompt using only the provided "
+    "tools. Follow the workflow's rules, read and update state through the tools, take the actions the "
+    "prompt calls for, and stop once the goal is met."
+)
 
 
 class WorkflowNotFound(LookupError):
@@ -64,7 +73,13 @@ class ActionRecorded:
     action_id: UUID
 
 
-type Event = RunCreated | StatusRecorded | ActionRecorded
+@dataclass(frozen=True, slots=True)
+class RunStatusChanged:
+    run_id: UUID
+    status: RunStatus
+
+
+type Event = RunCreated | StatusRecorded | ActionRecorded | RunStatusChanged
 
 
 def emit(event: Event) -> None:
@@ -75,10 +90,14 @@ def emit(event: Event) -> None:
             logger.info("status recorded: run={} update={}", run_id, update_id)
         case ActionRecorded(run_id=run_id, action_id=action_id):
             logger.info("action recorded: run={} action={}", run_id, action_id)
+        case RunStatusChanged(run_id=run_id, status=status):
+            logger.info("run status: run={} status={}", run_id, status)
 
 
 @dataclass(frozen=True, slots=True)
 class Engine:
+    provider: AgentProvider = field(default_factory=ClaudeAgentSDKProvider)
+
     async def active_workflow(self, workflow_id: WorkflowId) -> Workflow:
         workflow = (
             await Workflow.find(Workflow.workflow_id == workflow_id, Workflow.status == "active")
@@ -119,7 +138,18 @@ class Engine:
         )
 
     async def invoke_agent(self, run: Run) -> None:
-        raise NotImplementedError("agent runner deferred: wire claude-agent-sdk/anthropic here")
+        workflow = await Workflow.get(run.workflow_doc_id)
+        if workflow is None:
+            raise WorkflowNotFound(run.workflow_doc_id)
+        specs = tuple(t.to_spec() for ts in self.build_toolsets(run) for t in ts.get_tools())
+        await self.set_status(run, "running")
+        result = await self.provider.run(AgentRequest(system=SYSTEM, prompt=workflow.definition.prompt, tools=specs))
+        await self.record_status(run, StatusUpdate(title="result", blocks=[TextBlock(text=result.text)]))
+        await self.set_status(run, "succeeded" if result.ok else "failed")
+
+    async def set_status(self, run: Run, status: RunStatus) -> None:
+        await run.update({"$set": {"status": status}})
+        emit(RunStatusChanged(run_id=run.uid, status=status))
 
     async def record_status(self, run: Run, update: StatusUpdate) -> None:
         await run.update({"$push": {"status_updates": update.model_dump(mode="python")}})

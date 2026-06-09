@@ -51,7 +51,7 @@ def test_tui_invokes_run_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(calls) == 1
 
 
-def test_run_propagates_agent_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_propagates_engine_error(monkeypatch: pytest.MonkeyPatch) -> None:
     async def boom(self: Engine, fired: object) -> None:
         raise NotImplementedError("seam")
 

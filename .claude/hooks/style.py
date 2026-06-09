@@ -131,6 +131,7 @@ class NoWeakeningToAny(StyleDiffRule):
             file="x.py", old="def f() -> dict[str, Foo]:\n    ...", content="def f() -> dict[str, Any]:\n    ..."
         ): Allow(),
     }
+
     def check(self, pre: ast.Module, post: ast.Module) -> Iterator[Violation]:
         yield from M.annotated(M.ref("Any")).diff(pre, post, key=any_label, label=any_label)
 

@@ -6,9 +6,11 @@ from uuid import UUID
 import anyio
 import click
 
+from dailies.agent import ClaudeAgentSDKProvider
 from dailies.db import lifespan
 from dailies.engine import Engine, TriggerFired
 from dailies.interface import TextualPresenter, run_tui
+from dailies.interview import InterviewRunner
 from dailies.models import ManualTrigger, WorkflowId
 
 
@@ -57,7 +59,27 @@ def tick() -> None:
     anyio.run(go)
 
 
+def build_interviewer() -> InterviewRunner:
+    return InterviewRunner(ClaudeAgentSDKProvider())
+
+
 @main.command()
 def tui() -> None:
     """Launch the Textual UI."""
-    run_tui(TextualPresenter())
+
+    async def go() -> None:
+        async with lifespan():
+            await run_tui(TextualPresenter(), build_interviewer())
+
+    anyio.run(go)
+
+
+@main.command()
+def interview() -> None:
+    """Launch straight into the onboarding interview."""
+
+    async def go() -> None:
+        async with lifespan():
+            await run_tui(TextualPresenter(), build_interviewer(), start_interview=True)
+
+    anyio.run(go)

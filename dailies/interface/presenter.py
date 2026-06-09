@@ -8,12 +8,12 @@ from uuid import UUID
 from pydantic import JsonValue
 
 from dailies.documents import Run, Task, Workflow
-from dailies.models import WorkflowId
+from dailies.models import TaskId, WorkflowId
 
 
 @dataclass(frozen=True, slots=True)
 class Intent:
-    task_id: UUID | None
+    task_id: TaskId | None
     text: str
 
 
@@ -23,7 +23,7 @@ class Presenter(Protocol):
 
     async def list_tasks(self) -> Sequence[Task]: ...
 
-    async def list_workflows(self, task_id: UUID) -> Sequence[Workflow]: ...
+    async def list_workflows(self, task_id: TaskId) -> Sequence[Workflow]: ...
 
     async def list_runs(self, workflow_id: WorkflowId) -> Sequence[Run]: ...
 

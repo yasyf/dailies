@@ -16,6 +16,7 @@ from dailies.models import (
     StatusUpdate,
     StopCondition,
     TaskDefinition,
+    TaskId,
     TaskStatus,
     Trigger,
     WorkflowDefinition,
@@ -46,13 +47,17 @@ class Task(TimestampedDocument):
     summary: str | None = None
     stop_conditions: list[StopCondition] = Field(default_factory=list)
 
+    @property
+    def uid(self) -> TaskId:
+        return TaskId(self.id)
+
     class Settings:
         name = "tasks"
         indexes = [IndexModel([("status", ASCENDING)])]
 
 
 class Workflow(TimestampedDocument):
-    task_id: UUID
+    task_id: TaskId
     workflow_id: WorkflowId
     version: int
     name: str

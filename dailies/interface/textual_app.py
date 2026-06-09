@@ -12,7 +12,9 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from dailies.documents import Run, Task, Workflow, WorkflowState
 from dailies.interface.presenter import Presenter
-from dailies.models import Block, ImageBlock, TextBlock, WorkflowId
+from dailies.interface.screens import InterviewScreen
+from dailies.interview import InterviewRunner
+from dailies.models import Block, ImageBlock, TaskId, TextBlock, WorkflowId
 
 
 async def mount_block(container: VerticalScroll, block: Block) -> None:
@@ -27,7 +29,7 @@ class TextualPresenter:
     async def list_tasks(self) -> list[Task]:
         return await Task.find_all().to_list()
 
-    async def list_workflows(self, task_id: UUID) -> list[Workflow]:
+    async def list_workflows(self, task_id: TaskId) -> list[Workflow]:
         return await Workflow.find(Workflow.task_id == task_id).to_list()
 
     async def list_runs(self, workflow_id: WorkflowId) -> list[Run]:
@@ -56,8 +58,15 @@ class TaskListScreen(Screen[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
+        await self.refresh_tasks()
+
+    async def on_screen_resume(self) -> None:
+        await self.refresh_tasks()
+
+    async def refresh_tasks(self) -> None:
         self.tasks = list(await self.presenter.list_tasks())
         view = self.query_one("#list", ListView)
+        await view.clear()
         for task in self.tasks:
             await view.append(ListItem(Label(task.name)))
         if self.tasks:
@@ -70,7 +79,7 @@ class TaskListScreen(Screen[None]):
 
 
 class WorkflowListScreen(Screen[None]):
-    def __init__(self, presenter: Presenter, task_id: UUID) -> None:
+    def __init__(self, presenter: Presenter, task_id: TaskId) -> None:
         super().__init__()
         self.presenter = presenter
         self.task_id = task_id
@@ -153,16 +162,23 @@ class RunDetailScreen(Screen[None]):
 class DailiesApp(App[None]):
     """Textual drill-down UI over dailies tasks, workflows, runs, and stored state."""
 
-    BINDINGS: ClassVar = [("q", "quit", "Quit")]
+    BINDINGS: ClassVar = [("q", "quit", "Quit"), ("i", "interview", "Interview")]
 
-    def __init__(self, *, presenter: Presenter) -> None:
+    def __init__(self, *, presenter: Presenter, interviewer: InterviewRunner, start_interview: bool = False) -> None:
         super().__init__()
         self.presenter = presenter
+        self.interviewer = interviewer
+        self.start_interview = start_interview
 
     def on_mount(self) -> None:
         self.push_screen(TaskListScreen(self.presenter))
+        if self.start_interview:
+            self.push_screen(InterviewScreen(self.interviewer))
+
+    def action_interview(self) -> None:
+        self.push_screen(InterviewScreen(self.interviewer))
 
 
-def run_tui(presenter: Presenter) -> None:
-    """Launch the Textual UI against the given presenter (blocking; Textual owns the loop)."""
-    DailiesApp(presenter=presenter).run()
+async def run_tui(presenter: Presenter, interviewer: InterviewRunner, *, start_interview: bool = False) -> None:
+    """Launch the Textual UI against the given presenter (runs on the caller's event loop)."""
+    await DailiesApp(presenter=presenter, interviewer=interviewer, start_interview=start_interview).run_async()

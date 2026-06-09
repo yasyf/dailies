@@ -11,6 +11,7 @@ PromptStr = NewType("PromptStr", str)
 SchemaStr = NewType("SchemaStr", str)
 CronExpr = NewType("CronExpr", str)
 WorkflowId = NewType("WorkflowId", UUID)
+TaskId = NewType("TaskId", UUID)
 
 TaskStatus = Literal["draft", "active", "inactive"]
 RunStatus = Literal["pending", "running", "succeeded", "failed", "stopped"]
@@ -103,3 +104,38 @@ class TaskDefinition(FrozenModel):
 class WorkflowDefinition(FrozenModel):
     prompt: PromptStr
     rules: list[str] = Field(default_factory=list)
+
+
+class Exchange(FrozenModel):
+    question: str
+    answer: str
+
+
+class Interview(FrozenModel):
+    scenario: str
+    exchanges: list[Exchange] = Field(default_factory=list)
+
+
+class InterviewTurn(FrozenModel):
+    finished: bool
+    question: str | None
+
+
+class TaskDraft(FrozenModel):
+    name: str
+    description: str
+    user_input: str
+    prompt: str
+
+
+class WorkflowDraft(FrozenModel):
+    name: str
+    prompt: str
+    rules: list[str] = Field(default_factory=list)
+    ddl: str
+    cron_expression: str | None
+
+
+class TaskProposal(FrozenModel):
+    task: TaskDraft
+    workflows: list[WorkflowDraft]

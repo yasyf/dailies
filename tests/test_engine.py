@@ -20,6 +20,7 @@ from dailies.models import (
     PromptStr,
     SchemaStr,
     StatusUpdate,
+    TaskId,
     TaskStatus,
     Trigger,
     WorkflowDefinition,
@@ -39,7 +40,7 @@ def make_workflow(
     created_at: datetime | None = None,
 ) -> Workflow:
     workflow = Workflow(
-        task_id=uuid4(),
+        task_id=TaskId(uuid4()),
         workflow_id=workflow_id or WorkflowId(uuid4()),
         version=version,
         name="wf",

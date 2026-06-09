@@ -50,7 +50,7 @@ auto-loading — a missing required variable fails loudly):
 | --- | --- | --- |
 | `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string |
 | `MONGODB_DB` | `dailies` | Database name |
-| `ANTHROPIC_API_KEY` | `sk-ant-…` | Anthropic API key — required to run workflows (`dly run`, `dly tick`) |
+| `ANTHROPIC_API_KEY` | `sk-ant-…` | Anthropic API key — required to run workflows and the onboarding interview (`dly run`, `dly tick`, `dly interview`, `dly tui`) |
 
 A gitignored `.env` ships with localhost defaults. Load it into your shell before
 running:
@@ -67,11 +67,12 @@ for line in (grep -v '^#' .env | grep '=')
 end
 ```
 
-Running a workflow (`dly run`, `dly tick`) drives an agent through the Claude Agent
-SDK. The Claude Code CLI it relies on ships bundled with `claude-agent-sdk` — no
-separate install — but it runs as a Node.js subprocess, so a Node.js runtime and a
-valid `ANTHROPIC_API_KEY` must be present at run time. Importing the package needs
-neither.
+Running a workflow (`dly run`, `dly tick`) or the onboarding interview (`dly
+interview`, or the interview launched from inside `dly tui`) drives an agent through
+the Claude Agent SDK. The Claude Code CLI it relies on ships bundled with
+`claude-agent-sdk` — no separate install — but it runs as a Node.js subprocess, so a
+Node.js runtime and a valid `ANTHROPIC_API_KEY` must be present at run time. Importing
+the package needs neither.
 
 ## What problems does this solve?
 

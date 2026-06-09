@@ -27,7 +27,7 @@ def stub_lifespan(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_help_lists_commands() -> None:
     result = CliRunner().invoke(main, ["--help"])
     assert result.exit_code == 0
-    for command in ("run", "tick", "tui", "db"):
+    for command in ("run", "tick", "tui", "interview", "db"):
         assert command in result.output
 
 
@@ -44,11 +44,27 @@ def test_db_init_runs() -> None:
 
 
 def test_tui_invokes_run_tui(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[object] = []
-    monkeypatch.setattr(cli, "run_tui", calls.append)
+    calls: list[dict[str, object]] = []
+
+    async def record(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(cli, "run_tui", record)
     result = CliRunner().invoke(main, ["tui"])
     assert result.exit_code == 0
-    assert len(calls) == 1
+    assert calls == [{}]
+
+
+def test_interview_invokes_run_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def record(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(cli, "run_tui", record)
+    result = CliRunner().invoke(main, ["interview"])
+    assert result.exit_code == 0
+    assert calls == [{"start_interview": True}]
 
 
 def test_run_propagates_engine_error(monkeypatch: pytest.MonkeyPatch) -> None:

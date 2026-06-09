@@ -3,13 +3,14 @@ from __future__ import annotations
 import pytest
 
 from dailies.interface.textual_app import DailiesApp
-from tests.fakes import FakePresenter
+from dailies.interview import InterviewRunner
+from tests.fakes import FakePresenter, ScriptedProvider
 
 pytestmark = pytest.mark.tui
 
 
 async def test_drilldown_renders_three_panes() -> None:
-    app = DailiesApp(presenter=FakePresenter())
+    app = DailiesApp(presenter=FakePresenter(), interviewer=InterviewRunner(ScriptedProvider([])))
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("enter")  # task -> workflow list

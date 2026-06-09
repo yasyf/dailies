@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
-from dailies.models import Action, StatusUpdate, TextBlock, WorkflowId, utcnow
+from dailies.models import Action, StatusUpdate, TaskId, TextBlock, WorkflowId, utcnow
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,9 +29,19 @@ class FakeProvider:
 
 
 @dataclass(frozen=True, slots=True)
+class ScriptedProvider:
+    results: list[AgentResult]
+    requests: list[AgentRequest] = field(default_factory=list)
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        self.requests.append(request)
+        return self.results.pop(0)
+
+
+@dataclass(frozen=True, slots=True)
 class FakeTask:
     name: str
-    uid: UUID
+    uid: TaskId
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +64,7 @@ class FakeRun:
 class FakePresenter:
     def __init__(self) -> None:
         self.workflow_id = WorkflowId(uuid4())
-        self.task = FakeTask(name="Daily digest", uid=uuid4())
+        self.task = FakeTask(name="Daily digest", uid=TaskId(uuid4()))
         self.workflow = FakeWorkflow(name="digest-workflow", version=1, workflow_id=self.workflow_id)
         self.run = FakeRun(
             status="succeeded",
@@ -68,7 +78,7 @@ class FakePresenter:
     async def list_tasks(self) -> Sequence[FakeTask]:
         return [self.task]
 
-    async def list_workflows(self, task_id: UUID) -> Sequence[FakeWorkflow]:
+    async def list_workflows(self, task_id: TaskId) -> Sequence[FakeWorkflow]:
         return [self.workflow]
 
     async def list_runs(self, workflow_id: WorkflowId) -> Sequence[FakeRun]:

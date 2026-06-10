@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -42,25 +42,19 @@ def row_dict(row: aiosqlite.Row) -> dict[str, JsonValue]:
 
 
 def validate_ddl(ddl: SchemaStr) -> None:
-    db = sqlite3.connect(":memory:")
-    try:
+    with closing(sqlite3.connect(":memory:")) as db:
         db.executescript(ddl)
-    finally:
-        db.close()
 
 
 async def apply_ddl(storage: StateStorage, key: str, ddl: SchemaStr | None) -> None:
     async with storage.lease(key) as path:
         if path.exists():
             raise StateDatabaseExists(key)
-        db = await aiosqlite.connect(path)
-        try:
+        async with aiosqlite.connect(path) as db:
             await db.execute("PRAGMA journal_mode = WAL")
             if ddl is not None:
                 await db.executescript(ddl)
             await db.commit()
-        finally:
-            await db.close()
 
 
 @asynccontextmanager
@@ -71,8 +65,7 @@ async def state_session(
         storage.lease(workflow_db_key(context.workflow_id)) as main,
         storage.lease(task_db_key(context.task_id)) as shared,
     ):
-        db = await aiosqlite.connect(f"file:{main}?mode=rw", uri=True)
-        try:
+        async with aiosqlite.connect(f"file:{main}?mode=rw", uri=True) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA busy_timeout = 5000")
             await db.execute("PRAGMA foreign_keys = ON")
@@ -82,23 +75,20 @@ async def state_session(
             yield db
             if not readonly:
                 await db.commit()
-        finally:
-            await db.close()
 
 
 async def dump_state(storage: StateStorage, key: str) -> StateDump:
     async with storage.lease(key) as path:
-        db = await aiosqlite.connect(f"file:{path}?mode=rw", uri=True)
-        try:
+        async with aiosqlite.connect(f"file:{path}?mode=rw", uri=True) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA query_only = ON")
             tables = await db.execute_fetchall(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
             )
             return {
-                name: [row_dict(row) for row in rows]
+                name: [
+                    row_dict(row)
+                    for row in await db.execute_fetchall(f"SELECT * FROM {quote_ident(name)} LIMIT {MAX_ROWS}")
+                ]
                 for (name,) in tables
-                for rows in [await db.execute_fetchall(f"SELECT * FROM {quote_ident(name)} LIMIT {MAX_ROWS}")]
             }
-        finally:
-            await db.close()

@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from pydantic import BaseModel
+
 if TYPE_CHECKING:
     from claude_agent_sdk import SdkMcpTool
 
@@ -39,7 +41,8 @@ def adapt(spec: ToolSpec) -> SdkMcpTool[Any]:
             result = await spec.invoke(args)
         except Exception as exc:  # tool-execution boundary -> MCP is_error envelope
             return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
-        return {"content": [{"type": "text", "text": json.dumps(result, default=str)}]}
+        payload = result.model_dump(mode="json") if isinstance(result, BaseModel) else result
+        return {"content": [{"type": "text", "text": json.dumps(payload, default=str)}]}
 
     return handler
 

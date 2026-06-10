@@ -22,6 +22,7 @@ from dailies.models import (
     WorkflowId,
 )
 from dailies.runtime import RunContext
+from dailies.storage import StateStorage, state_storage
 from dailies.tools import ToolSet
 
 # First-sweep lookback: a long-idle workflow fires at most one slot within this window
@@ -31,7 +32,10 @@ LOOKBACK = timedelta(days=1)
 SYSTEM = (
     "You are the dailies workflow runner. Execute the user's workflow prompt using only the provided "
     "tools. Follow the workflow's rules, read and update state through the tools, take the actions the "
-    "prompt calls for, and stop once the goal is met."
+    "prompt calls for, and stop once the goal is met. "
+    "State lives in a SQLite database: this workflow's private tables are addressed bare, and tables "
+    "shared across the task's workflows as shared.<table>; inspect the schema with describe_state "
+    "before querying."
 )
 
 
@@ -97,6 +101,7 @@ def emit(event: Event) -> None:
 @dataclass(frozen=True, slots=True)
 class Engine:
     provider: AgentProvider = field(default_factory=ClaudeAgentSDKProvider)
+    storage: StateStorage = field(default_factory=state_storage)
 
     async def active_workflow(self, workflow_id: WorkflowId) -> Workflow:
         workflow = (
@@ -144,7 +149,8 @@ class Engine:
                 workflow_doc_id=run.workflow_doc_id,
                 task_id=run.task_id,
                 run_id=run.uid,
-            )
+            ),
+            storage=self.storage,
         )
 
     async def invoke_agent(self, run: Run) -> None:

@@ -9,6 +9,7 @@ from dailies.agent import AgentProvider, AgentResult, ClaudeAgentSDKProvider, ad
 from dailies.models import TaskId, WorkflowId
 from dailies.runtime import RunContext
 from dailies.tools.base import ToolSet, ToolSpec, tool
+from dailies.tools.state import QueryResult
 from tests.fakes import FakeProvider
 
 pytestmark = pytest.mark.unit
@@ -37,6 +38,16 @@ def add_spec() -> ToolSpec:
 
 async def test_adapt_wraps_result_in_text_block() -> None:
     assert await adapt(add_spec()).handler({"a": 1, "b": 2}) == {"content": [{"type": "text", "text": "3"}]}
+
+
+async def test_adapt_dumps_model_results_as_json() -> None:
+    async def model_result(args: dict[str, Any]) -> Any:
+        return QueryResult(rows=[{"n": 1}], truncated=False)
+
+    spec = ToolSpec(name="q", description="d", input_schema={"type": "object"}, invoke=model_result)
+    assert await adapt(spec).handler({}) == {
+        "content": [{"type": "text", "text": '{"rows": [{"n": 1}], "truncated": false}'}]
+    }
 
 
 async def test_adapt_maps_exception_to_is_error() -> None:

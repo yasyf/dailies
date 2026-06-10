@@ -1,112 +1,78 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from pydantic import JsonValue
 
-from dailies.documents import Task, TaskState, Workflow, WorkflowState
-from dailies.models import new_uuid, utcnow
-from dailies.runtime import RunContext
+from dailies.models import FrozenModel
+from dailies.state import MAX_ROWS, row_dict, state_session
 from dailies.tools.base import ToolSet, tool
 
+if TYPE_CHECKING:
+    from dailies.runtime import RunContext
+    from dailies.storage import StateStorage
 
-@dataclass(frozen=True, slots=True)
-class StateStore:
-    document: type[WorkflowState] | type[TaskState]
-    filter: dict[str, UUID]
-    ddl: Callable[[], Awaitable[str | None]]
+type SqlParam = str | int | float | bool | None
 
-    async def read(self) -> dict[str, JsonValue]:
-        row = await self.document.find_one(self.filter)
-        return row.data if row else {}
 
-    async def get(self, key: str) -> JsonValue:
-        return (await self.read()).get(key)
+class QueryResult(FrozenModel):
+    rows: list[dict[str, JsonValue]]
+    truncated: bool
 
-    async def write(self, fields: dict[str, JsonValue]) -> None:
-        await self.document.find_one(self.filter).update(
-            {
-                "$set": {f"data.{key}": value for key, value in fields.items()} | {"updated_at": utcnow()},
-                "$setOnInsert": {"_id": new_uuid(), "ddl": await self.ddl(), "created_at": utcnow()},
-            },
-            upsert=True,
-        )
 
-    async def clear(self) -> None:
-        await self.document.find_one(self.filter).delete()
+class ExecuteResult(FrozenModel):
+    rows_affected: int
+    last_insert_rowid: int
 
 
 @dataclass(frozen=True, slots=True)
 class StateToolSet(ToolSet):
     context: RunContext
-
-    @property
-    def store(self) -> StateStore:
-        return StateStore(WorkflowState, {"workflow_id": self.context.workflow_id}, self.workflow_ddl)
-
-    async def workflow_ddl(self) -> str:
-        return (await Workflow.get(self.context.workflow_doc_id)).ddl
+    storage: StateStorage
 
     @tool
-    async def read_state(self) -> dict[str, JsonValue]:
-        """Return the full stored state for the current workflow."""
-        return await self.store.read()
+    async def query_state(self, sql: str, params: list[SqlParam] | None = None) -> QueryResult:
+        """Run a read-only SQL query against this workflow's state database.
+
+        Private tables live in the main database; tables shared across the task's
+        workflows live in the attached `shared` database (e.g. SELECT * FROM
+        shared.totals). Use ? placeholders with params for values. At most 200 rows
+        are returned; truncated=true means the query matched more — narrow it with
+        WHERE or LIMIT/OFFSET.
+        """
+        async with state_session(self.storage, self.context, readonly=True) as db:
+            cursor = await db.execute(sql, params or [])
+            rows = await cursor.fetchmany(MAX_ROWS + 1)
+        return QueryResult(rows=[row_dict(row) for row in rows[:MAX_ROWS]], truncated=len(rows) > MAX_ROWS)
 
     @tool
-    async def get_state_value(self, key: str) -> JsonValue:
-        """Return a single stored state value by key (null if unset)."""
-        return await self.store.get(key)
+    async def execute_state(self, sql: str, params: list[SqlParam] | None = None) -> ExecuteResult:
+        """Execute one SQL write statement against this workflow's state database.
+
+        Accepts INSERT, UPDATE, DELETE, and schema changes (CREATE TABLE, ALTER
+        TABLE, DROP, CREATE INDEX). Address shared tables with the shared. prefix.
+        One statement per call; use ? placeholders with params for values. Returns
+        the affected row count (-1 for schema changes) and the rowid of the last
+        insert.
+        """
+        async with state_session(self.storage, self.context) as db:
+            cursor = await db.execute(sql, params or [])
+            return ExecuteResult(rows_affected=cursor.rowcount, last_insert_rowid=cursor.lastrowid or 0)
 
     @tool
-    async def set_state_value(self, key: str, value: JsonValue) -> None:
-        """Set a single stored state value."""
-        await self.store.write({key: value})
-
-    @tool
-    async def merge_state(self, patch: dict[str, JsonValue]) -> None:
-        """Shallow-merge a patch into the stored state."""
-        await self.store.write(patch)
-
-    @tool
-    async def clear_state(self) -> None:
-        """Remove all stored state for the current workflow."""
-        await self.store.clear()
-
-
-@dataclass(frozen=True, slots=True)
-class TaskStateToolSet(ToolSet):
-    context: RunContext
-
-    @property
-    def store(self) -> StateStore:
-        return StateStore(TaskState, {"task_id": self.context.task_id}, self.task_ddl)
-
-    async def task_ddl(self) -> str | None:
-        return (await Task.get(self.context.task_id)).shared_ddl
-
-    @tool
-    async def read_task_state(self) -> dict[str, JsonValue]:
-        """Return the full stored state shared across the current task's workflows."""
-        return await self.store.read()
-
-    @tool
-    async def get_task_state_value(self, key: str) -> JsonValue:
-        """Return a single shared task-state value by key (null if unset)."""
-        return await self.store.get(key)
-
-    @tool
-    async def set_task_state_value(self, key: str, value: JsonValue) -> None:
-        """Set a single shared task-state value."""
-        await self.store.write({key: value})
-
-    @tool
-    async def merge_task_state(self, patch: dict[str, JsonValue]) -> None:
-        """Shallow-merge a patch into the shared task state."""
-        await self.store.write(patch)
-
-    @tool
-    async def clear_task_state(self) -> None:
-        """Remove all shared state for the current task."""
-        await self.store.clear()
+    async def describe_state(self) -> dict[str, list[str]]:
+        """Return the current state schema as CREATE statements, keyed by database:
+        "main" for this workflow's private tables, "shared" for tables shared
+        across the task's workflows."""
+        async with state_session(self.storage, self.context, readonly=True) as db:
+            return {
+                schema: [
+                    sql
+                    for (sql,) in await db.execute_fetchall(
+                        f"SELECT sql FROM {schema}.sqlite_master "
+                        "WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL"
+                    )
+                ]
+                for schema in ("main", "shared")
+            }

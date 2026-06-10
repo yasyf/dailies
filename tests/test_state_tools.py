@@ -1,113 +1,103 @@
 from __future__ import annotations
 
-from typing import Any
+import sqlite3
 from uuid import uuid4
 
 import pytest
-from pymongo import AsyncMongoClient
 
-from dailies.documents import Task, TaskState, Workflow, WorkflowState
-from dailies.models import (
-    PromptStr,
-    SchemaStr,
-    TaskDefinition,
-    TaskId,
-    WorkflowDefinition,
-    WorkflowId,
-)
+from dailies.models import SchemaStr, TaskId, WorkflowId
 from dailies.runtime import RunContext
-from dailies.tools.state import StateToolSet, TaskStateToolSet
+from dailies.state import MAX_ROWS, apply_ddl, state_session, task_db_key, workflow_db_key
+from dailies.storage import StateStorage, state_storage
+from dailies.tools.state import ExecuteResult, StateToolSet
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.unit
 
-
-async def make_workflow(task_id: TaskId, *, ddl: str = "CREATE TABLE s (k TEXT)") -> Workflow:
-    return await Workflow(
-        task_id=task_id,
-        workflow_id=WorkflowId(uuid4()),
-        version=1,
-        name="wf",
-        definition=WorkflowDefinition(prompt=PromptStr("p")),
-        ddl=SchemaStr(ddl),
-        status="active",
-    ).insert()
+ITEMS_DDL = "CREATE TABLE items (name TEXT, qty INTEGER)"
 
 
-async def make_task(shared_ddl: str | None) -> Task:
-    return await Task(
-        name="t",
-        definition=TaskDefinition(user_input="i", description="d", prompt=PromptStr("p")),
-        shared_ddl=SchemaStr(shared_ddl) if shared_ddl is not None else None,
-    ).insert()
-
-
-def ctx(workflow: Workflow) -> RunContext:
+def make_context(task_id: TaskId | None = None) -> RunContext:
     return RunContext(
-        workflow_id=workflow.workflow_id, workflow_doc_id=workflow.uid, task_id=workflow.task_id, run_id=uuid4()
+        workflow_id=WorkflowId(uuid4()),
+        workflow_doc_id=uuid4(),
+        task_id=task_id or TaskId(uuid4()),
+        run_id=uuid4(),
     )
 
 
-async def test_workflow_state_roundtrip(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
-    workflow = await make_workflow(TaskId(uuid4()))
-    tools = StateToolSet(ctx(workflow))
-
-    assert await tools.read_state() == {}
-    assert await WorkflowState.find(WorkflowState.workflow_id == workflow.workflow_id).first_or_none() is None
-    assert await tools.get_state_value("missing") is None
-
-    await tools.set_state_value("count", 1)
-    assert await tools.get_state_value("count") == 1
-    assert await tools.read_state() == {"count": 1}
-
-    await tools.merge_state({"count": 2, "label": "x"})
-    assert await tools.read_state() == {"count": 2, "label": "x"}
-
-    row = await WorkflowState.find(WorkflowState.workflow_id == workflow.workflow_id).first_or_none()
-    assert row is not None and row.ddl == workflow.ddl
-
-    await tools.clear_state()
-    assert await tools.read_state() == {}
-    assert await WorkflowState.find(WorkflowState.workflow_id == workflow.workflow_id).count() == 0
+async def make_tools(
+    storage: StateStorage,
+    *,
+    task_id: TaskId | None = None,
+    ddl: str = ITEMS_DDL,
+    shared_ddl: str | None = None,
+) -> StateToolSet:
+    context = make_context(task_id)
+    await apply_ddl(storage, workflow_db_key(context.workflow_id), SchemaStr(ddl))
+    if task_id is None:
+        await apply_ddl(storage, task_db_key(context.task_id), SchemaStr(shared_ddl) if shared_ddl else None)
+    return StateToolSet(context, storage)
 
 
-async def test_task_state_roundtrip(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
-    task = await make_task("CREATE TABLE shared (k TEXT)")
-    workflow = await make_workflow(task.uid)
-    tools = TaskStateToolSet(ctx(workflow))
+async def test_execute_and_query_roundtrip() -> None:
+    tools = await make_tools(state_storage())
+    result = await tools.execute_state("INSERT INTO items VALUES (?, ?)", ["kibble", 3])
+    assert result == ExecuteResult(rows_affected=1, last_insert_rowid=1)
 
-    assert await tools.read_task_state() == {}
-    await tools.set_task_state_value("count", 1)
-    await tools.merge_task_state({"label": "x"})
-    assert await tools.read_task_state() == {"count": 1, "label": "x"}
-
-    row = await TaskState.find(TaskState.task_id == task.uid).first_or_none()
-    assert row is not None and row.ddl == task.shared_ddl
-
-    await tools.clear_task_state()
-    assert await tools.read_task_state() == {}
+    query = await tools.query_state("SELECT name, qty FROM items WHERE qty > ?", [1])
+    assert query.rows == [{"name": "kibble", "qty": 3}]
+    assert query.truncated is False
 
 
-async def test_task_state_ddl_none_when_unscoped(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
-    task = await make_task(None)
-    workflow = await make_workflow(task.uid)
-    tools = TaskStateToolSet(ctx(workflow))
+async def test_query_truncates_at_max_rows() -> None:
+    tools = await make_tools(state_storage())
+    async with state_session(tools.storage, tools.context) as db:
+        await db.executemany("INSERT INTO items VALUES (?, ?)", [("x", i) for i in range(MAX_ROWS + 1)])
+    query = await tools.query_state("SELECT * FROM items")
+    assert len(query.rows) == MAX_ROWS
+    assert query.truncated is True
 
-    await tools.set_task_state_value("k", 1)
-    row = await TaskState.find(TaskState.task_id == task.uid).first_or_none()
-    assert row is not None and row.ddl is None and row.data == {"k": 1}
+
+async def test_query_rejects_writes() -> None:
+    tools = await make_tools(state_storage())
+    with pytest.raises(sqlite3.OperationalError):
+        await tools.query_state("INSERT INTO items VALUES ('x', 1)")
 
 
-async def test_scenario5_shared_counter(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
-    task = await make_task("CREATE TABLE penalty_state (penalty_counter INTEGER NOT NULL DEFAULT 0)")
-    a = TaskStateToolSet(ctx(await make_workflow(task.uid)))
-    b = TaskStateToolSet(ctx(await make_workflow(task.uid)))
+async def test_shared_counter_across_sibling_workflows() -> None:
+    storage = state_storage()
+    task_id = TaskId(uuid4())
+    await apply_ddl(
+        storage,
+        task_db_key(task_id),
+        SchemaStr("CREATE TABLE penalty_state (penalty_counter INTEGER NOT NULL DEFAULT 0)"),
+    )
+    a = await make_tools(storage, task_id=task_id)
+    b = await make_tools(storage, task_id=task_id)
 
-    await a.set_task_state_value("penalty_counter", 1)
-    assert await b.get_task_state_value("penalty_counter") == 1
-    await b.set_task_state_value("penalty_counter", await b.get_task_state_value("penalty_counter") + 1)
-    assert await a.get_task_state_value("penalty_counter") == 2
+    await a.execute_state("INSERT INTO shared.penalty_state (penalty_counter) VALUES (1)")
+    await b.execute_state("UPDATE shared.penalty_state SET penalty_counter = penalty_counter + 1")
+    query = await a.query_state("SELECT penalty_counter FROM shared.penalty_state")
+    assert query.rows == [{"penalty_counter": 2}]
 
-    await a.set_task_state_value("from_a", "x")
-    await b.set_task_state_value("from_b", "y")
-    assert await a.read_task_state() == {"penalty_counter": 2, "from_a": "x", "from_b": "y"}
-    assert await TaskState.find(TaskState.task_id == task.uid).count() == 1
+
+async def test_alter_table_reflected_in_describe() -> None:
+    tools = await make_tools(state_storage())
+    result = await tools.execute_state("ALTER TABLE items ADD COLUMN price REAL")
+    assert result.rows_affected == -1
+
+    described = await tools.describe_state()
+    assert described["main"] == [f"{ITEMS_DDL[:-1]}, price REAL)"]
+    assert described["shared"] == []
+
+
+async def test_describe_lists_main_and_shared_schemas() -> None:
+    tools = await make_tools(state_storage(), shared_ddl="CREATE TABLE totals (n INTEGER)")
+    assert await tools.describe_state() == {"main": [ITEMS_DDL], "shared": ["CREATE TABLE totals (n INTEGER)"]}
+
+
+async def test_connection_state_does_not_survive_across_calls() -> None:
+    tools = await make_tools(state_storage())
+    await tools.execute_state("CREATE TEMP TABLE scratch (v INTEGER)")
+    with pytest.raises(sqlite3.OperationalError):
+        await tools.query_state("SELECT * FROM scratch")

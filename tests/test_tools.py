@@ -10,7 +10,8 @@ from dailies.runtime import RunContext
 from dailies.tools import build_toolsets
 from dailies.tools.action import Notification
 from dailies.tools.base import StructuredSink, ToolSet, tool
-from dailies.tools.state import StateToolSet, TaskStateToolSet
+from dailies.storage import state_storage
+from dailies.tools.state import StateToolSet
 
 pytestmark = pytest.mark.unit
 
@@ -142,8 +143,8 @@ async def test_structured_sink_captures_validated_model() -> None:
 
 
 async def test_every_stub_raises_not_implemented() -> None:
-    for toolset in build_toolsets(context()):
-        if isinstance(toolset, (StateToolSet, TaskStateToolSet)):
+    for toolset in build_toolsets(context(), storage=state_storage()):
+        if isinstance(toolset, StateToolSet):
             continue
         for handle in toolset.get_tools():
             with pytest.raises(NotImplementedError):

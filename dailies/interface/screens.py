@@ -6,30 +6,12 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, Static
+from textual.widgets import Button, Footer, Header, Input, Label, Static
 from textual.worker import Worker, WorkerState
 
+from dailies.interface.rendering import WorkflowCard, ddl_block, workflow_flow
 from dailies.interview import InterviewError, InterviewRunner, persist_proposal
-from dailies.models import (
-    CronTrigger,
-    EventTrigger,
-    Exchange,
-    Interview,
-    ManualTrigger,
-    TaskProposal,
-    TaskStatus,
-    Trigger,
-)
-
-
-def render_trigger(trigger: Trigger) -> str:
-    match trigger:
-        case CronTrigger(cron_expression=expr, timezone=tz):
-            return f"cron {expr} ({tz})"
-        case EventTrigger(event_type=event_type, event_key=event_key):
-            return f"event {event_type}/{event_key}"
-        case ManualTrigger():
-            return "manual"
+from dailies.models import Exchange, Interview, TaskProposal, TaskStatus
 
 
 class InterviewScreen(Screen[None]):
@@ -48,13 +30,13 @@ class InterviewScreen(Screen[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
-        await self.echo("Interviewer: What would you like to automate?")
+        await self.echo("Interviewer: What would you like to automate?", classes="msg-agent")
         self.query_one("#answer", Input).focus()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if not (answer := event.value.strip()):
             return
-        await self.echo(f"You: {answer}")
+        await self.echo(f"You: {answer}", classes="msg-user")
         event.input.value = ""
         event.input.disabled = True
         interview = self.next_interview(answer)
@@ -78,19 +60,19 @@ class InterviewScreen(Screen[None]):
             self.app.push_screen(ReviewScreen(await self.runner.synthesize(interview)))
         elif result.question is not None:
             self.pending_question = result.question
-            await self.echo(f"Interviewer: {result.question}")
+            await self.echo(f"Interviewer: {result.question}", classes="msg-agent")
             self.reenable_input()
         else:
             raise InterviewError("interview turn was not finished but asked no question")
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.group == "interview" and event.state is WorkerState.ERROR:
-            await self.echo(f"[error] {event.worker.error}")
+            await self.echo(f"error: {event.worker.error}", classes="msg-error")
             self.reenable_input()
 
-    async def echo(self, text: str) -> None:
+    async def echo(self, text: str, *, classes: str) -> None:
         transcript = self.query_one("#transcript", VerticalScroll)
-        await transcript.mount(Static(text))
+        await transcript.mount(Static(text, classes=classes, markup=False))
         transcript.scroll_end(animate=False)
 
     def reenable_input(self) -> None:
@@ -112,15 +94,13 @@ class ReviewScreen(Screen[None]):
         task = self.proposal.task
         yield Header()
         with VerticalScroll(id="review"):
-            yield Static(f"Task: {task.name}")
-            yield Static(task.description)
-            yield Static(f"Prompt: {task.prompt}")
+            yield Label(task.name, classes="task-name", markup=False)
+            yield Static(task.description, markup=False)
+            yield Static(task.prompt, classes="muted", markup=False)
+            if task.shared_ddl:
+                yield ddl_block(task.shared_ddl)
             for wf in self.proposal.workflows:
-                yield Static(f"\nWorkflow: {wf.name}")
-                yield Static(f"  prompt: {wf.prompt}")
-                yield Static(f"  rules: {', '.join(wf.rules) or '—'}")
-                yield Static(f"  ddl: {wf.ddl}")
-                yield Static(f"  triggers: {', '.join(render_trigger(t) for t in wf.triggers) or '—'}")
+                yield workflow_flow(WorkflowCard.from_draft(wf))
         with Horizontal(id="buttons"):
             yield Button("Approve", id="approve", variant="success")
             yield Button("Save draft", id="save")
@@ -134,7 +114,7 @@ class ReviewScreen(Screen[None]):
         self.persist(status="draft")
 
     def action_discard(self) -> None:
-        self.app.pop_screen()
+        self.close_review()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
@@ -145,12 +125,16 @@ class ReviewScreen(Screen[None]):
             case "discard":
                 self.action_discard()
 
+    def close_review(self) -> None:
+        self.app.pop_screen()
+        self.app.pop_screen()
+
     @work(exclusive=True, exit_on_error=False, group="persist")
     async def persist(self, *, status: TaskStatus) -> None:
         task = await persist_proposal(self.proposal, status=status)
-        self.notify(f"Saved “{task.name}” as {status}.")
-        self.app.pop_screen()
+        self.notify(f"Saved “{task.name}” as {status}.", markup=False)
+        self.close_review()
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.group == "persist" and event.state is WorkerState.ERROR:
-            self.notify(f"Save failed: {event.worker.error}", severity="error")
+            self.notify(f"Save failed: {event.worker.error}", severity="error", markup=False)

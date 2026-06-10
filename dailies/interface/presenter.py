@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from pydantic import JsonValue
-
-from dailies.documents import Run, Task, Workflow
+from dailies.documents import Run, Task, TaskState, Workflow, WorkflowState
 from dailies.models import TaskId, WorkflowId
 
 
 @dataclass(frozen=True, slots=True)
-class Intent:
-    task_id: TaskId | None
-    text: str
+class BlastRadius:
+    workflows: int
+    runs: int
 
 
 @runtime_checkable
 class Presenter(Protocol):
-    """Read-only view over tasks, workflows, runs, and stored state for a UI."""
+    """Query and curation surface over tasks, workflows, runs, and stored state for a UI."""
 
     async def list_tasks(self) -> Sequence[Task]: ...
 
@@ -31,4 +29,10 @@ class Presenter(Protocol):
 
     async def get_run(self, run_id: UUID) -> Run: ...
 
-    async def get_state(self, workflow_id: WorkflowId) -> Mapping[str, JsonValue]: ...
+    async def get_state(self, workflow_id: WorkflowId) -> WorkflowState | None: ...
+
+    async def get_task_state(self, task_id: TaskId) -> TaskState | None: ...
+
+    async def blast_radius(self, task_id: TaskId) -> BlastRadius: ...
+
+    async def delete_task(self, task_id: TaskId) -> None: ...

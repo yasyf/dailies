@@ -7,7 +7,7 @@ keep the pilot test independent of MongoDB.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -15,11 +15,13 @@ from uuid import UUID, uuid4
 from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
+from dailies.interface.presenter import BlastRadius
 from dailies.models import (
     Action,
     CronExpr,
     CronTrigger,
     PromptStr,
+    RunStatus,
     SchemaStr,
     StatusUpdate,
     TaskDefinition,
@@ -73,6 +75,7 @@ class FakeTask:
     definition: TaskDefinition = field(
         default_factory=lambda: TaskDefinition(user_input="i", description="d", prompt=PromptStr("p"))
     )
+    shared_ddl: SchemaStr | None = None
     status: TaskStatus = "active"
 
 
@@ -89,12 +92,25 @@ class FakeWorkflow:
 
 @dataclass(frozen=True, slots=True)
 class FakeRun:
-    status: str
+    status: RunStatus
     created_at: datetime
     uid: UUID
     workflow_id: WorkflowId
+    trigger: Trigger
     status_updates: list[StatusUpdate]
     actions: list[Action]
+
+
+@dataclass(frozen=True, slots=True)
+class FakeWorkflowState:
+    data: dict[str, JsonValue]
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FakeTaskState:
+    data: dict[str, JsonValue]
+    updated_at: datetime
 
 
 class FakePresenter:
@@ -106,6 +122,7 @@ class FakePresenter:
             definition=TaskDefinition(
                 user_input="email me a digest", description="Send a daily digest", prompt=PromptStr("summarize the day")
             ),
+            shared_ddl=SchemaStr("CREATE TABLE totals (sent INTEGER)"),
             status="active",
         )
         self.workflow = FakeWorkflow(
@@ -122,12 +139,17 @@ class FakePresenter:
             created_at=utcnow(),
             uid=uuid4(),
             workflow_id=self.workflow_id,
+            trigger=CronTrigger(cron_expression=CronExpr("0 9 * * *")),
             status_updates=[StatusUpdate(title="started", blocks=[TextBlock(text="hello world")])],
             actions=[Action(kind="email", target="user@example.com")],
         )
+        self.tasks: list[FakeTask] = [self.task]
+        self.deleted: list[TaskId] = []
+        self.state = FakeWorkflowState({"processed": 3, "last": "ok"}, utcnow())
+        self.task_state = FakeTaskState({"sent": 7}, utcnow())
 
     async def list_tasks(self) -> Sequence[FakeTask]:
-        return [self.task]
+        return self.tasks
 
     async def get_task(self, task_id: TaskId) -> FakeTask:
         return self.task
@@ -141,5 +163,15 @@ class FakePresenter:
     async def get_run(self, run_id: UUID) -> FakeRun:
         return self.run
 
-    async def get_state(self, workflow_id: WorkflowId) -> Mapping[str, JsonValue]:
-        return {"processed": 3, "last": "ok"}
+    async def get_state(self, workflow_id: WorkflowId) -> FakeWorkflowState:
+        return self.state
+
+    async def get_task_state(self, task_id: TaskId) -> FakeTaskState:
+        return self.task_state
+
+    async def blast_radius(self, task_id: TaskId) -> BlastRadius:
+        return BlastRadius(workflows=1, runs=1)
+
+    async def delete_task(self, task_id: TaskId) -> None:
+        self.deleted.append(task_id)
+        self.tasks = [task for task in self.tasks if task.uid != task_id]

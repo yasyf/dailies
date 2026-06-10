@@ -7,7 +7,7 @@ from textual.widgets import Input
 
 from dailies.interface import screens
 from dailies.interface.screens import ReviewScreen
-from dailies.interface.textual_app import DailiesApp
+from dailies.interface.textual_app import DailiesApp, TaskListScreen
 from dailies.interview import InterviewRunner
 from dailies.models import TaskId, TaskProposal, TaskStatus
 from tests.fakes import FakePresenter, FakeTask, ToolScriptedProvider
@@ -56,3 +56,4 @@ async def test_interview_to_review_and_approve(monkeypatch: pytest.MonkeyPatch) 
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert calls == ["active"]
+        assert isinstance(app.screen, TaskListScreen)

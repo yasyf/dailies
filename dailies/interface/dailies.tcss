@@ -1,0 +1,180 @@
+.badge {
+    text-style: bold;
+    padding: 0 1;
+}
+
+.badge.draft {
+    color: $warning;
+}
+
+.badge.active {
+    color: $success;
+}
+
+.badge.inactive {
+    color: $text-muted;
+}
+
+ListView {
+    padding: 1 2;
+}
+
+ListItem {
+    padding: 0 1;
+}
+
+ListItem Vertical, ListItem Horizontal {
+    height: auto;
+}
+
+.item-title {
+    text-style: bold;
+}
+
+.item-meta {
+    color: $text-muted;
+}
+
+#detail, #review, #task-state {
+    padding: 1 2;
+}
+
+.task-header {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.task-header Horizontal {
+    height: auto;
+}
+
+.task-name {
+    text-style: bold;
+}
+
+.muted {
+    color: $text-muted;
+}
+
+.flow {
+    height: auto;
+    max-width: 100;
+    margin: 1 0;
+}
+
+.flow-triggers {
+    height: auto;
+}
+
+.flow-triggers > .flow-box {
+    margin-right: 2;
+}
+
+.flow-box {
+    height: auto;
+    width: auto;
+    max-width: 100%;
+    border: round $primary;
+    padding: 0 1;
+}
+
+.flow-box.trigger {
+    border: round $accent;
+}
+
+.flow-box.state {
+    border: round $secondary;
+}
+
+.flow-box.draft {
+    border: round $warning;
+}
+
+.flow-box.inactive {
+    border: round $foreground 50%;
+}
+
+.flow-arrow {
+    height: 2;
+    width: 100%;
+    text-align: center;
+    color: $text-muted;
+}
+
+.flow-terminus {
+    width: 100%;
+    text-align: center;
+}
+
+.ddl {
+    height: auto;
+}
+
+#runs {
+    height: 1fr;
+    margin: 1 2;
+}
+
+#panes > VerticalScroll {
+    width: 1fr;
+    border: round $primary;
+    padding: 0 1;
+    margin-right: 1;
+}
+
+.update-title {
+    text-style: bold;
+}
+
+.update-time {
+    color: $text-muted;
+}
+
+#transcript {
+    padding: 1 2;
+}
+
+.msg-agent {
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.msg-user {
+    margin-bottom: 1;
+}
+
+.msg-error {
+    color: $error;
+}
+
+#buttons {
+    height: auto;
+    align-horizontal: center;
+    padding: 1;
+}
+
+#buttons Button {
+    margin: 0 2;
+}
+
+ConfirmDeleteScreen {
+    align: center middle;
+}
+
+ConfirmDeleteScreen > Vertical {
+    width: auto;
+    height: auto;
+    padding: 1 2;
+    background: $surface;
+    border: thick $error;
+}
+
+ConfirmDeleteScreen Horizontal {
+    height: auto;
+    align-horizontal: center;
+    margin-top: 1;
+}
+
+ConfirmDeleteScreen Button {
+    margin: 0 1;
+}

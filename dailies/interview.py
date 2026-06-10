@@ -23,6 +23,8 @@ from dailies.models import (
     WorkflowId,
     new_uuid,
 )
+from dailies.state import apply_ddl, task_db_key, validate_ddl, workflow_db_key
+from dailies.storage import state_storage
 from dailies.tools.base import StructuredSink
 
 TURN_SYSTEM = (
@@ -31,7 +33,7 @@ TURN_SYSTEM = (
     "that resolves the biggest remaining ambiguity (trigger timing and timezone, scheduled vs event-driven "
     "vs manual, data sources, outputs, edge cases). Keep it answerable in a single line. "
     "Map the scenario onto dailies' own primitives, not the user's incidental tools: anything to track or "
-    "log is state you design as a SQL-like schema; cadence is a trigger; tool use (a browser, an email, a "
+    "log is state you design as a SQLite schema; cadence is a trigger; tool use (a browser, an email, a "
     "subagent) is a goal you state in a prompt. Do not ask the user to name or locate an incidental tool "
     "(which spreadsheet, which tab, which channel) — infer the underlying need and design the schema "
     "yourself, and ask only about intent the scenario leaves genuinely ambiguous. "
@@ -43,9 +45,13 @@ SYNTHESIS_SYSTEM = (
     "You are designing a recurring automated task from a completed onboarding interview. Produce one "
     "TaskProposal. The task has a human name, a one-sentence description, user_input set to the user's "
     "verbatim opening scenario, a prompt (a standing instruction the agent follows on every run), and "
-    "shared_ddl — a SQL-like schema for state shared across its workflows, or null when nothing is shared. "
+    "shared_ddl — a SQLite schema for state shared across its workflows, or null when nothing is shared. "
     "Provide one or more workflows; each has a name, a per-run prompt, a list of plain-language rules, a "
     "ddl for the state private to that workflow, and one or more triggers. "
+    "Every ddl and shared_ddl is executed verbatim against a fresh SQLite database when the task is saved, "
+    "so it must be valid SQLite DDL: semicolon-terminated CREATE TABLE (and optional CREATE INDEX) "
+    "statements using SQLite types (TEXT, INTEGER, REAL). At run time the workflow addresses its own "
+    "tables bare and shared tables as shared.<table>. "
     "Map implementation details onto these primitives rather than baking the user's incidental tool choices "
     "into prompts; the workflow IS the agent and its tools come from the runtime, so never prescribe the "
     "execution substrate: "
@@ -108,8 +114,16 @@ class InterviewRunner:
 
 
 async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Task:
-    """Persist a reviewed proposal as a Task and its Workflows; Approve and Save differ only by ``status``."""
-    task = await Task(
+    """Persist a reviewed proposal as a Task and its Workflows; Approve and Save differ only by ``status``.
+
+    Validates every DDL, then materializes the per-task and per-workflow state
+    databases, then inserts the documents — so a proposal with bad DDL persists
+    nothing.
+    """
+    storage = state_storage()
+    for ddl in filter(None, [proposal.task.shared_ddl, *(draft.ddl for draft in proposal.workflows)]):
+        validate_ddl(SchemaStr(ddl))
+    task = Task(
         name=proposal.task.name,
         definition=TaskDefinition(
             user_input=proposal.task.user_input,
@@ -118,9 +132,9 @@ async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Tas
         ),
         shared_ddl=SchemaStr(proposal.task.shared_ddl) if proposal.task.shared_ddl else None,
         status=status,
-    ).insert()
-    for draft in proposal.workflows:
-        await Workflow(
+    )
+    workflows = [
+        Workflow(
             task_id=task.uid,
             workflow_id=WorkflowId(new_uuid()),
             version=1,
@@ -129,5 +143,13 @@ async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Tas
             ddl=SchemaStr(draft.ddl),
             status=status,
             triggers=draft_triggers(draft),
-        ).insert()
+        )
+        for draft in proposal.workflows
+    ]
+    await apply_ddl(storage, task_db_key(task.uid), task.shared_ddl)
+    for workflow in workflows:
+        await apply_ddl(storage, workflow_db_key(workflow.workflow_id), workflow.ddl)
+    await task.insert()
+    for workflow in workflows:
+        await workflow.insert()
     return task

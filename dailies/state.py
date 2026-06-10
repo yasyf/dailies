@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -38,6 +39,14 @@ def quote_ident(name: str) -> str:
 
 def row_dict(row: aiosqlite.Row) -> dict[str, JsonValue]:
     return dict(zip(row.keys(), row, strict=True))
+
+
+def validate_ddl(ddl: SchemaStr) -> None:
+    db = sqlite3.connect(":memory:")
+    try:
+        db.executescript(ddl)
+    finally:
+        db.close()
 
 
 async def apply_ddl(storage: StateStorage, key: str, ddl: SchemaStr | None) -> None:

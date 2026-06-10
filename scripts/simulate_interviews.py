@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -112,9 +113,10 @@ async def simulate(runner: InterviewRunner, provider: AgentProvider, scenario: s
                         exchanges=[*interview.exchanges, Exchange(question=question, answer=answer)],
                     )
         proposal = await runner.synthesize(interview)
-    except (InterviewError, ValidationError) as exc:
+        task = await persist_proposal(proposal, status="draft")
+    except (InterviewError, ValidationError, sqlite3.Error) as exc:
         return Failure(scenario=scenario, error=str(exc))
-    return Success(scenario, interview, proposal, await persist_proposal(proposal, status="draft"))
+    return Success(scenario, interview, proposal, task)
 
 
 def render_trigger(trigger: Trigger) -> str:

@@ -28,8 +28,9 @@ uv add dly
 
 ## Commands
 
-`dailies` stores its tasks, workflows, runs, and state in MongoDB. Point it at a
-database, then drive it:
+`dailies` stores its tasks, workflows, and runs in MongoDB; per-workflow and
+per-task state lives in local SQLite databases under `DAILIES_STATE_DIR`. Point
+it at a database, then drive it:
 
 ```bash
 uvx dly db init             # connect to MongoDB and create indexes
@@ -50,6 +51,7 @@ auto-loading — a missing required variable fails loudly):
 | --- | --- | --- |
 | `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string |
 | `MONGODB_DB` | `dailies` | Database name |
+| `DAILIES_STATE_DIR` | `scratch/state` | Directory holding the per-workflow and per-task SQLite state databases |
 | `ANTHROPIC_API_KEY` | `sk-ant-…` | Anthropic API key — required to run workflows and the onboarding interview (`dly run`, `dly tick`, `dly interview`, `dly tui`) |
 
 A gitignored `.env` ships with localhost defaults. Load it into your shell before

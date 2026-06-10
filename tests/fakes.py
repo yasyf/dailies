@@ -16,7 +16,6 @@ from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
 from dailies.interface.presenter import BlastRadius
-from dailies.state import StateDump
 from dailies.models import (
     Action,
     CronExpr,
@@ -34,6 +33,7 @@ from dailies.models import (
     WorkflowId,
     utcnow,
 )
+from dailies.state import StateDump
 
 
 @dataclass(frozen=True, slots=True)

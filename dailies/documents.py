@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import UUID
 
 from beanie import Document, Insert, Replace, SaveChanges, Update, before_event
-from pydantic import Field, JsonValue
+from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from dailies.models import (
@@ -94,25 +94,5 @@ class Run(TimestampedDocument):
         ]
 
 
-class WorkflowState(TimestampedDocument):
-    workflow_id: WorkflowId
-    ddl: SchemaStr
-    data: dict[str, JsonValue] = Field(default_factory=dict)
-
-    class Settings:
-        name = "workflow_state"
-        indexes = [IndexModel([("workflow_id", ASCENDING)], unique=True)]
-
-
-class TaskState(TimestampedDocument):
-    task_id: TaskId
-    ddl: SchemaStr | None = None
-    data: dict[str, JsonValue] = Field(default_factory=dict)
-
-    class Settings:
-        name = "task_state"
-        indexes = [IndexModel([("task_id", ASCENDING)], unique=True)]
-
-
 def document_models() -> list[type[Document]]:
-    return [Task, Workflow, Run, WorkflowState, TaskState]
+    return [Task, Workflow, Run]

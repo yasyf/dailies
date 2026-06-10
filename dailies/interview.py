@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from dailies.agent import AgentProvider, AgentRequest
 from dailies.documents import Task, Workflow
 from dailies.models import (
+    LOCAL_TZ,
     Interview,
     InterviewTurn,
     PromptStr,
@@ -53,7 +54,8 @@ SYNTHESIS_SYSTEM = (
     "send an email -> a goal stated in the workflow prompt, never a named subagent, Chrome group, or file; "
     "standing behavior and constraints -> the task prompt and the workflow rules. "
     "Each trigger is one of: cron (a standard 5-field cron string plus an IANA timezone such as "
-    "America/Los_Angeles — set the timezone whenever the scenario implies a local time, and never bake an "
+    "America/Los_Angeles — set the timezone whenever the scenario implies a local time; when a local time is "
+    f"implied but no specific zone is named, default to the user's local timezone, {LOCAL_TZ}; never bake an "
     "offset into the cron fields); event (react to something arriving — an inbound email or reply, a "
     "webhook, a price change — instead of polling on a clock); or manual (run on demand). "
     "State that several workflows read or write (a counter, a running total) belongs in the task's "

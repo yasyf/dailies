@@ -6,6 +6,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from dailies.models import (
+    LOCAL_TZ,
     Action,
     CronExpr,
     CronTrigger,
@@ -39,8 +40,8 @@ def test_trigger_discriminated_roundtrip(payload: dict[str, str], expected: type
     assert trigger_adapter.dump_python(parsed) == payload
 
 
-def test_cron_trigger_timezone_defaults_utc() -> None:
-    assert CronTrigger(cron_expression=CronExpr("0 9 * * *")).timezone == "UTC"
+def test_cron_trigger_timezone_defaults_local() -> None:
+    assert CronTrigger(cron_expression=CronExpr("0 9 * * *")).timezone == LOCAL_TZ
 
 
 def test_unknown_trigger_kind_rejected() -> None:

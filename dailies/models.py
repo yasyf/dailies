@@ -6,6 +6,9 @@ from uuid import UUID
 
 import uuid6
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from tzlocal import get_localzone_name
+
+LOCAL_TZ = get_localzone_name()
 
 PromptStr = NewType("PromptStr", str)
 SchemaStr = NewType("SchemaStr", str)
@@ -52,7 +55,7 @@ class StoredModel(BaseModel):
 class CronTrigger(FrozenModel):
     kind: Literal["cron"] = "cron"
     cron_expression: CronExpr
-    timezone: str = "UTC"
+    timezone: str = LOCAL_TZ
 
 
 class EventTrigger(FrozenModel):

@@ -9,7 +9,7 @@ from dailies.models import CronExpr, CronTrigger
 
 pytestmark = pytest.mark.unit
 
-NINE_AM = CronTrigger(cron_expression=CronExpr("0 9 * * *"))
+NINE_AM = CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="UTC")
 BASE = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
 
 

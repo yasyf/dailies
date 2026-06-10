@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import ClassVar
 from uuid import UUID
 
-from beanie.operators import In
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -11,7 +11,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Header, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
 
-from dailies.documents import Run, Task, TaskState, Workflow, WorkflowState
+from dailies.documents import Run, Task, Workflow
 from dailies.interface.presenter import BlastRadius, Presenter
 from dailies.interface.rendering import (
     WorkflowCard,
@@ -28,9 +28,14 @@ from dailies.interface.rendering import (
 from dailies.interface.screens import InterviewScreen
 from dailies.interview import InterviewRunner
 from dailies.models import TaskId, WorkflowId
+from dailies.state import StateDump, dump_state, task_db_key, workflow_db_key
+from dailies.storage import StateStorage, state_storage
 
 
+@dataclass(frozen=True, slots=True)
 class TextualPresenter:
+    storage: StateStorage = field(default_factory=state_storage)
+
     async def list_tasks(self) -> list[Task]:
         return await Task.find_all().to_list()
 
@@ -52,11 +57,11 @@ class TextualPresenter:
             raise LookupError(run_id)
         return run
 
-    async def get_state(self, workflow_id: WorkflowId) -> WorkflowState | None:
-        return await WorkflowState.find(WorkflowState.workflow_id == workflow_id).first_or_none()
+    async def get_state(self, workflow_id: WorkflowId) -> StateDump:
+        return await dump_state(self.storage, workflow_db_key(workflow_id))
 
-    async def get_task_state(self, task_id: TaskId) -> TaskState | None:
-        return await TaskState.find(TaskState.task_id == task_id).first_or_none()
+    async def get_task_state(self, task_id: TaskId) -> StateDump:
+        return await dump_state(self.storage, task_db_key(task_id))
 
     async def blast_radius(self, task_id: TaskId) -> BlastRadius:
         return BlastRadius(
@@ -67,8 +72,9 @@ class TextualPresenter:
     async def delete_task(self, task_id: TaskId) -> None:
         workflow_ids = [w.workflow_id for w in await Workflow.find(Workflow.task_id == task_id).to_list()]
         await Run.find(Run.task_id == task_id).delete()
-        await WorkflowState.find(In(WorkflowState.workflow_id, workflow_ids)).delete()
-        await TaskState.find(TaskState.task_id == task_id).delete()
+        for workflow_id in workflow_ids:
+            await self.storage.delete(workflow_db_key(workflow_id))
+        await self.storage.delete(task_db_key(task_id))
         await Workflow.find(Workflow.task_id == task_id).delete()
         await Task.find(Task.id == task_id).delete()
 
@@ -236,7 +242,7 @@ class TaskDetailScreen(DrillScreen):
 
 
 class StateScreen(DrillScreen):
-    """Stored state for one task: highlighted DDL plus live key/value rows per workflow."""
+    """Stored state for one task: highlighted DDL plus live table rows per workflow."""
 
     def __init__(self, presenter: Presenter, task_id: TaskId) -> None:
         super().__init__()
@@ -251,10 +257,9 @@ class StateScreen(DrillScreen):
     async def on_mount(self) -> None:
         task = await self.presenter.get_task(self.task_id)
         pane = self.query_one("#task-state", VerticalScroll)
-        if task.shared_ddl:
-            await pane.mount(
-                *state_widgets("Shared task state", task.shared_ddl, await self.presenter.get_task_state(self.task_id))
-            )
+        await pane.mount(
+            *state_widgets("Shared task state", task.shared_ddl, await self.presenter.get_task_state(self.task_id))
+        )
         for workflow in await self.presenter.list_workflows(self.task_id):
             await pane.mount(
                 *state_widgets(
@@ -375,7 +380,9 @@ class RunDetailScreen(DrillScreen):
             *(Static(f"{action.kind} -> {action.target}", markup=False) for action in run.actions)
         )
         state = await self.presenter.get_state(run.workflow_id)
-        await self.query_one("#state", VerticalScroll).mount(Static(state_table(state.data if state else {})))
+        await self.query_one("#state", VerticalScroll).mount(
+            *(Static(state_table(name, rows)) for name, rows in state.items())
+        )
 
 
 class DailiesApp(App[None]):

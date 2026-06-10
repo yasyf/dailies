@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from dailies.documents import Run, Task, TaskState, Workflow, WorkflowState
+from dailies.documents import Run, Task, Workflow
 from dailies.models import TaskId, WorkflowId
+from dailies.state import StateDump
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,9 +30,9 @@ class Presenter(Protocol):
 
     async def get_run(self, run_id: UUID) -> Run: ...
 
-    async def get_state(self, workflow_id: WorkflowId) -> WorkflowState | None: ...
+    async def get_state(self, workflow_id: WorkflowId) -> StateDump: ...
 
-    async def get_task_state(self, task_id: TaskId) -> TaskState | None: ...
+    async def get_task_state(self, task_id: TaskId) -> StateDump: ...
 
     async def blast_radius(self, task_id: TaskId) -> BlastRadius: ...
 

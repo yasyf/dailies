@@ -30,8 +30,9 @@ if TYPE_CHECKING:
     from pydantic import JsonValue
     from textual.widget import Widget
 
-    from dailies.documents import Task, TaskState, Workflow, WorkflowState
+    from dailies.documents import Task, Workflow
     from dailies.models import WorkflowDraft
+    from dailies.state import StateDump
 
 CREATE_TABLE = re.compile(
     r"""CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?(?P<table>[\w.]+)["'`\]]?\s*\((?P<body>.*)\)""",
@@ -237,19 +238,18 @@ def workflow_flow(card: WorkflowCard) -> Vertical:
     )
 
 
-def state_table(data: Mapping[str, JsonValue]) -> Table:
-    table = Table("key", "value")
-    for key, value in data.items():
-        table.add_row(key, repr(value))
+def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]]) -> Table:
+    table = Table(*(rows[0] if rows else ()), title=name, caption=None if rows else "(no rows)")
+    for row in rows:
+        table.add_row(*(repr(value) for value in row.values()))
     return table
 
 
-def state_widgets(title: str, ddl: str, state: WorkflowState | TaskState | None) -> list[Static]:
-    heading = f"{title}  (no state)" if state is None else f"{title}  (updated {state.updated_at:%Y-%m-%d %H:%M})"
+def state_widgets(title: str, ddl: str | None, state: StateDump) -> list[Static]:
     return [
-        Static(heading, markup=False),
-        Static(ddl_syntax(ddl)),
-        Static(state_table(state.data if state else {})),
+        Static(title, markup=False),
+        *(() if ddl is None else (Static(ddl_syntax(ddl)),)),
+        *(Static(state_table(name, rows)) for name, rows in state.items()),
     ]
 
 

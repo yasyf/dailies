@@ -16,6 +16,7 @@ from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
 from dailies.interface.presenter import BlastRadius
+from dailies.state import StateDump
 from dailies.models import (
     Action,
     CronExpr,
@@ -101,18 +102,6 @@ class FakeRun:
     actions: list[Action]
 
 
-@dataclass(frozen=True, slots=True)
-class FakeWorkflowState:
-    data: dict[str, JsonValue]
-    updated_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class FakeTaskState:
-    data: dict[str, JsonValue]
-    updated_at: datetime
-
-
 class FakePresenter:
     def __init__(self) -> None:
         self.workflow_id = WorkflowId(uuid4())
@@ -145,8 +134,8 @@ class FakePresenter:
         )
         self.tasks: list[FakeTask] = [self.task]
         self.deleted: list[TaskId] = []
-        self.state = FakeWorkflowState({"processed": 3, "last": "ok"}, utcnow())
-        self.task_state = FakeTaskState({"sent": 7}, utcnow())
+        self.state: StateDump = {"sent": [{"day": "2026-06-09"}, {"day": "2026-06-10"}]}
+        self.task_state: StateDump = {"totals": [{"sent": 7}]}
 
     async def list_tasks(self) -> Sequence[FakeTask]:
         return self.tasks
@@ -163,10 +152,10 @@ class FakePresenter:
     async def get_run(self, run_id: UUID) -> FakeRun:
         return self.run
 
-    async def get_state(self, workflow_id: WorkflowId) -> FakeWorkflowState:
+    async def get_state(self, workflow_id: WorkflowId) -> StateDump:
         return self.state
 
-    async def get_task_state(self, task_id: TaskId) -> FakeTaskState:
+    async def get_task_state(self, task_id: TaskId) -> StateDump:
         return self.task_state
 
     async def blast_radius(self, task_id: TaskId) -> BlastRadius:

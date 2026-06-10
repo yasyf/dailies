@@ -182,9 +182,11 @@ async def test_state_screen_shows_ddl_and_data() -> None:
         screen = app.screen
         assert isinstance(screen, StateScreen)
         statics = list(screen.query_one("#task-state").query(Static))
-        assert str(statics[0].render()).startswith("Shared task state  (updated ")
+        assert str(statics[0].render()) == "Shared task state"
         assert syntax_code(statics[1]) == "CREATE TABLE totals (sent INTEGER)"
+        assert rich_table(statics[2]).title == "totals"
         assert rich_table(statics[2]).row_count == 1
-        assert str(statics[3].render()).startswith("digest-workflow v1  (updated ")
+        assert str(statics[3].render()) == "digest-workflow v1"
         assert syntax_code(statics[4]) == "CREATE TABLE sent (day TEXT)"
+        assert rich_table(statics[5]).title == "sent"
         assert rich_table(statics[5]).row_count == 2

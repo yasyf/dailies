@@ -10,7 +10,7 @@ from dailies.runtime import RunContext
 from dailies.tools import build_toolsets
 from dailies.tools.action import Notification
 from dailies.tools.base import StructuredSink, ToolSet, tool
-from dailies.tools.state import StateToolSet
+from dailies.tools.state import StateToolSet, TaskStateToolSet
 
 pytestmark = pytest.mark.unit
 
@@ -120,16 +120,6 @@ def test_tool_guard_requires_annotations() -> None:
 
 
 VALID_ARGS: dict[str, dict] = {
-    "read_state": {},
-    "get_state_value": {"key": "k"},
-    "set_state_value": {"key": "k", "value": 1},
-    "merge_state": {"patch": {"k": 1}},
-    "clear_state": {},
-    "read_task_state": {},
-    "get_task_state_value": {"key": "k"},
-    "set_task_state_value": {"key": "k", "value": 1},
-    "merge_task_state": {"patch": {"k": 1}},
-    "clear_task_state": {},
     "send_email": {"to": "a", "subject": "s", "body": "b"},
     "notify": {"notification": {"channel": "c", "title": "t", "body": "b"}},
     "record_action": {"kind": "k", "payload": {}},
@@ -151,14 +141,10 @@ async def test_structured_sink_captures_validated_model() -> None:
     assert sink.result == InterviewTurn(finished=True, question=None)
 
 
-async def test_state_stub_raises_not_implemented() -> None:
-    spec = next(t for t in StateToolSet(context()).get_tools() if t.name == "read_state").to_spec()
-    with pytest.raises(NotImplementedError):
-        await spec.invoke({})
-
-
 async def test_every_stub_raises_not_implemented() -> None:
     for toolset in build_toolsets(context()):
+        if isinstance(toolset, (StateToolSet, TaskStateToolSet)):
+            continue
         for handle in toolset.get_tools():
             with pytest.raises(NotImplementedError):
                 await handle.to_spec().invoke(VALID_ARGS[handle.name])

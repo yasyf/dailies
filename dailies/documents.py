@@ -106,7 +106,7 @@ class WorkflowState(TimestampedDocument):
 
 class TaskState(TimestampedDocument):
     task_id: TaskId
-    ddl: SchemaStr
+    ddl: SchemaStr | None = None
     data: dict[str, JsonValue] = Field(default_factory=dict)
 
     class Settings:

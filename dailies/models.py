@@ -60,8 +60,9 @@ class CronTrigger(FrozenModel):
 
 class EventTrigger(FrozenModel):
     kind: Literal["event"] = "event"
-    event_type: str
-    event_key: str
+    source: str
+    event: str
+    key: str
 
 
 class ManualTrigger(FrozenModel):
@@ -69,6 +70,11 @@ class ManualTrigger(FrozenModel):
 
 
 type Trigger = Annotated[CronTrigger | EventTrigger | ManualTrigger, Field(discriminator="kind")]
+
+
+class Firing(StoredModel):
+    trigger: Trigger
+    occurrence_ids: list[str] = Field(default_factory=list)
 
 
 class TextBlock(StoredModel):

@@ -16,6 +16,7 @@ from dailies.models import (
     Block,
     CronTrigger,
     EventTrigger,
+    Firing,
     ImageBlock,
     ManualTrigger,
     RunStatus,
@@ -133,10 +134,18 @@ def render_trigger(trigger: Trigger) -> str:
     match trigger:
         case CronTrigger(cron_expression=expr, timezone=tz):
             return f"cron {expr} ({tz})"
-        case EventTrigger(event_type=event_type, event_key=event_key):
-            return f"event {event_type}/{event_key}"
+        case EventTrigger(source=source, event=event, key=key):
+            return f"event {source} {event}/{key}"
         case ManualTrigger():
             return "manual"
+
+
+def render_firing(firing: Firing) -> str:
+    match firing:
+        case Firing(occurrence_ids=[]):
+            return render_trigger(firing.trigger)
+        case Firing(trigger=trigger, occurrence_ids=ids):
+            return f"{render_trigger(trigger)} ({len(ids)} msgs)"
 
 
 def excerpt(text: str, *, limit: int = 160) -> str:

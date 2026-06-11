@@ -10,6 +10,7 @@ from dailies.interface.rendering import (
     WorkflowCard,
     excerpt,
     parse_ddl,
+    render_firing,
     render_trigger,
     run_status_text,
 )
@@ -17,6 +18,7 @@ from dailies.models import (
     CronExpr,
     CronTrigger,
     EventTrigger,
+    Firing,
     ManualTrigger,
     PromptStr,
     RunStatus,
@@ -119,12 +121,36 @@ def test_excerpt(text: str, limit: int, expected: str) -> None:
         pytest.param(
             CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="UTC"), "cron 0 9 * * * (UTC)", id="cron"
         ),
-        pytest.param(EventTrigger(event_type="email", event_key="inbox"), "event email/inbox", id="event"),
+        pytest.param(
+            EventTrigger(source="gmail", event="query", key="from:a@b.com"),
+            "event gmail query/from:a@b.com",
+            id="event",
+        ),
         pytest.param(ManualTrigger(), "manual", id="manual"),
     ],
 )
 def test_render_trigger(trigger: Trigger, expected: str) -> None:
     assert render_trigger(trigger) == expected
+
+
+@pytest.mark.parametrize(
+    ("firing", "expected"),
+    [
+        pytest.param(Firing(trigger=ManualTrigger()), "manual", id="manual-no-occurrences"),
+        pytest.param(
+            Firing(trigger=CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="UTC")),
+            "cron 0 9 * * * (UTC)",
+            id="cron-no-occurrences",
+        ),
+        pytest.param(
+            Firing(trigger=EventTrigger(source="gmail", event="query", key="inbox"), occurrence_ids=["m1", "m2", "m3"]),
+            "event gmail query/inbox (3 msgs)",
+            id="event-counts-occurrences",
+        ),
+    ],
+)
+def test_render_firing(firing: Firing, expected: str) -> None:
+    assert render_firing(firing) == expected
 
 
 @pytest.mark.parametrize(

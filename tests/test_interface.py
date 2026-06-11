@@ -14,6 +14,7 @@ from dailies.interface.presenter import BlastRadius, Presenter
 from dailies.interface.textual_app import TextualPresenter
 from dailies.models import (
     Action,
+    Firing,
     ManualTrigger,
     PromptStr,
     SchemaStr,
@@ -57,7 +58,7 @@ async def make_run(workflow: Workflow) -> Run:
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
         task_id=workflow.task_id,
-        trigger=ManualTrigger(),
+        fired_by=[Firing(trigger=ManualTrigger())],
     ).insert()
 
 
@@ -89,7 +90,7 @@ async def test_read_methods_roundtrip(mongo: AsyncMongoClient[dict[str, Any]]) -
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
         task_id=task.uid,
-        trigger=ManualTrigger(),
+        fired_by=[Firing(trigger=ManualTrigger())],
         status_updates=[StatusUpdate(title="s1"), StatusUpdate(title="s2")],
         actions=[Action(kind="email", target="a@b.com")],
     )

@@ -4,7 +4,7 @@ import inspect
 from abc import ABC
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, ParamSpec, TypeVar, get_type_hints
+from typing import Any, ClassVar, ParamSpec, TypeVar, get_type_hints
 
 from pydantic import BaseModel, create_model
 
@@ -81,6 +81,8 @@ class StructuredSink[T: BaseModel]:
 
 
 class ToolSet(ABC):
+    integrations: ClassVar[tuple[str, ...]] = ()
+
     @staticmethod
     def tool(fn: Callable[P, Coroutine[Any, Any, T]]) -> Callable[P, Coroutine[Any, Any, T]]:
         qualname = getattr(fn, "__qualname__", "<tool>")

@@ -11,6 +11,7 @@ from dailies.models import (
     CronExpr,
     CronTrigger,
     EventTrigger,
+    Firing,
     ManualTrigger,
     StatusUpdate,
     StopCondition,
@@ -30,7 +31,7 @@ stop_adapter: TypeAdapter[StopCondition] = TypeAdapter(StopCondition)
         pytest.param(
             {"kind": "cron", "cron_expression": "0 9 * * *", "timezone": "America/New_York"}, CronTrigger, id="cron-tz"
         ),
-        pytest.param({"kind": "event", "event_type": "email", "event_key": "abc"}, EventTrigger, id="event"),
+        pytest.param({"kind": "event", "source": "gmail", "event": "query", "key": "abc"}, EventTrigger, id="event"),
         pytest.param({"kind": "manual"}, ManualTrigger, id="manual"),
     ],
 )
@@ -38,6 +39,15 @@ def test_trigger_discriminated_roundtrip(payload: dict[str, str], expected: type
     parsed = trigger_adapter.validate_python(payload)
     assert isinstance(parsed, expected)
     assert trigger_adapter.dump_python(parsed) == payload
+
+
+def test_firing_defaults_to_no_occurrences() -> None:
+    assert Firing(trigger=ManualTrigger()).occurrence_ids == []
+
+
+def test_firing_roundtrips_trigger_union() -> None:
+    firing = Firing(trigger=EventTrigger(source="gmail", event="thread", key="t1"), occurrence_ids=["m1"])
+    assert Firing.model_validate(firing.model_dump()) == firing
 
 
 def test_cron_trigger_timezone_defaults_local() -> None:

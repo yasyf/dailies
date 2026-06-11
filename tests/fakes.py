@@ -15,11 +15,15 @@ from uuid import UUID, uuid4
 from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
+from dailies.connections import Connection, NotConnected
+from dailies.gmail import SEARCH_LIMIT, GmailProfile, MessageMeta, SentEmail, ThreadNotFound
+from dailies.gmail import EmailMessage as GmailMessage
 from dailies.interface.presenter import BlastRadius
 from dailies.models import (
     Action,
     CronExpr,
     CronTrigger,
+    Firing,
     PromptStr,
     RunStatus,
     SchemaStr,
@@ -97,7 +101,7 @@ class FakeRun:
     created_at: datetime
     uid: UUID
     workflow_id: WorkflowId
-    trigger: Trigger
+    fired_by: list[Firing]
     status_updates: list[StatusUpdate]
     actions: list[Action]
 
@@ -128,7 +132,7 @@ class FakePresenter:
             created_at=utcnow(),
             uid=uuid4(),
             workflow_id=self.workflow_id,
-            trigger=CronTrigger(cron_expression=CronExpr("0 9 * * *")),
+            fired_by=[Firing(trigger=CronTrigger(cron_expression=CronExpr("0 9 * * *")))],
             status_updates=[StatusUpdate(title="started", blocks=[TextBlock(text="hello world")])],
             actions=[Action(kind="email", target="user@example.com")],
         )
@@ -164,3 +168,78 @@ class FakePresenter:
     async def delete_task(self, task_id: TaskId) -> None:
         self.deleted.append(task_id)
         self.tasks = [task for task in self.tasks if task.uid != task_id]
+
+
+def email_meta(message: GmailMessage) -> MessageMeta:
+    return MessageMeta(id=message.id, thread_id=message.thread_id, date=message.date)
+
+
+@dataclass(frozen=True, slots=True)
+class FakeGmail:
+    """In-memory GmailClient: mutate ``messages`` mid-test to simulate arriving mail.
+
+    Queries match by substring against sender, subject, and body; threads group
+    messages by ``thread_id`` and raise ``ThreadNotFound`` when no message carries it.
+    """
+
+    messages: dict[str, GmailMessage] = field(default_factory=dict)
+    sent: list[GmailMessage] = field(default_factory=list)
+    address: str = "fake@example.com"
+
+    def add(self, message: GmailMessage) -> None:
+        self.messages[message.id] = message
+
+    def matching(self, query: str) -> list[GmailMessage]:
+        return sorted(
+            (m for m in self.messages.values() if query in m.sender or query in m.subject or query in m.body),
+            key=lambda m: m.date,
+        )
+
+    def in_thread(self, thread_id: str) -> list[GmailMessage]:
+        if not (found := sorted((m for m in self.messages.values() if m.thread_id == thread_id), key=lambda m: m.date)):
+            raise ThreadNotFound(thread_id)
+        return found
+
+    async def search(self, query: str, *, limit: int = SEARCH_LIMIT) -> list[GmailMessage]:
+        return self.matching(query)[:limit]
+
+    async def message(self, message_id: str) -> GmailMessage:
+        return self.messages[message_id]
+
+    async def thread(self, thread_id: str) -> list[GmailMessage]:
+        return self.in_thread(thread_id)
+
+    async def thread_metas(self, thread_id: str) -> list[MessageMeta]:
+        return [email_meta(m) for m in self.in_thread(thread_id)]
+
+    async def query_metas(self, query: str, *, after: datetime) -> list[MessageMeta]:
+        return [email_meta(m) for m in self.matching(query) if m.date > after]
+
+    async def send(self, *, to: str, subject: str, body: str) -> SentEmail:
+        message = GmailMessage(
+            id=f"sent-{len(self.sent)}",
+            thread_id=f"sent-thread-{len(self.sent)}",
+            sender=self.address,
+            to=to,
+            subject=subject,
+            body=body,
+            date=utcnow(),
+        )
+        self.sent.append(message)
+        return SentEmail(message_id=message.id, thread_id=message.thread_id)
+
+    async def profile(self) -> GmailProfile:
+        return GmailProfile(email=self.address)
+
+
+@dataclass(frozen=True, slots=True)
+class FakeConnectionStore:
+    connections: dict[str, Connection] = field(default_factory=dict)
+
+    async def load(self, name: str) -> Connection:
+        if name not in self.connections:
+            raise NotConnected(name)
+        return self.connections[name]
+
+    async def store(self, name: str, connection: Connection) -> None:
+        self.connections[name] = connection

@@ -79,7 +79,7 @@ async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> 
     [
         pytest.param(CronTrigger(cron_expression=CronExpr("0 9 * * *")), id="cron-utc"),
         pytest.param(CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="America/New_York"), id="cron-tz"),
-        pytest.param(EventTrigger(event_type="email", event_key="abc"), id="event"),
+        pytest.param(EventTrigger(source="gmail", event="query", key="abc"), id="event"),
         pytest.param(ManualTrigger(), id="manual"),
     ],
 )

@@ -17,6 +17,7 @@ from dailies.interface.rendering import (
     WorkflowCard,
     block_widget,
     excerpt,
+    render_firing,
     render_trigger,
     run_status_text,
     state_table,
@@ -331,11 +332,11 @@ class RunListScreen(DrillScreen):
     async def on_mount(self) -> None:
         self.sub_title = f"{self.workflow.name} v{self.workflow.version}"
         table = self.query_one("#runs", DataTable)
-        table.add_columns("status", "trigger", "started")
+        table.add_columns("status", "fired by", "started")
         for run in await self.presenter.list_runs(self.workflow.workflow_id):
             table.add_row(
                 run_status_text(run.status),
-                render_trigger(run.trigger),
+                ", ".join(render_firing(firing) for firing in run.fired_by),
                 f"{run.created_at:%Y-%m-%d %H:%M}",
                 key=str(run.uid),
             )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from beanie import Document, Insert, Replace, SaveChanges, Update, before_event
@@ -11,6 +12,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from dailies.models import (
     Action,
+    Firing,
     RunStatus,
     SchemaStr,
     StatusUpdate,
@@ -81,7 +83,7 @@ class Run(TimestampedDocument):
     workflow_doc_id: UUID
     workflow_id: WorkflowId
     task_id: TaskId
-    trigger: Trigger
+    fired_by: list[Firing]
     status: RunStatus = "pending"
     status_updates: list[StatusUpdate] = Field(default_factory=list)
     actions: list[Action] = Field(default_factory=list)
@@ -94,5 +96,23 @@ class Run(TimestampedDocument):
         ]
 
 
+class Subscription(TimestampedDocument):
+    workflow_id: WorkflowId
+    source: str
+    event: str
+    key: str
+    watermark: datetime
+    origin: Literal["trigger", "agent"]
+
+    class Settings:
+        name = "subscriptions"
+        indexes = [
+            IndexModel(
+                [("workflow_id", ASCENDING), ("source", ASCENDING), ("event", ASCENDING), ("key", ASCENDING)],
+                unique=True,
+            )
+        ]
+
+
 def document_models() -> list[type[Document]]:
-    return [Task, Workflow, Run]
+    return [Task, Workflow, Run, Subscription]

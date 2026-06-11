@@ -5,25 +5,28 @@ from datetime import datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from beanie.operators import In, Max
 from croniter import croniter
 from loguru import logger
 
 from dailies import tools
 from dailies.agent import AgentProvider, AgentRequest, ClaudeAgentSDKProvider
-from dailies.documents import Run, Workflow
+from dailies.documents import Run, Subscription, Workflow
+from dailies.gmail import GmailClient, ThreadNotFound, gmail_client
 from dailies.models import (
     Action,
     CronTrigger,
     EventTrigger,
+    Firing,
     RunStatus,
     StatusUpdate,
     TextBlock,
-    Trigger,
     WorkflowId,
 )
 from dailies.runtime import RunContext
 from dailies.storage import StateStorage, state_storage
 from dailies.tools import ToolSet
+from dailies.tools.inputs import insert_subscription, news_since
 
 # First-sweep lookback: a long-idle workflow fires at most one slot within this window
 # (fire-at-most-once-per-sweep, no catch-up). Tune to match the dly tick cadence.
@@ -35,7 +38,9 @@ SYSTEM = (
     "prompt calls for, and stop once the goal is met. "
     "State lives in a SQLite database: this workflow's private tables are addressed bare, and tables "
     "shared across the task's workflows as shared.<table>; inspect the schema with describe_state "
-    "before querying."
+    "before querying. "
+    "check_subscriptions reports new messages on watched email threads and queries; check it whenever "
+    "a run may have been fired by email activity."
 )
 
 
@@ -56,7 +61,16 @@ async def workflow_cursor(workflow: Workflow, *, now: datetime) -> datetime:
 @dataclass(frozen=True, slots=True)
 class TriggerFired:
     workflow_id: WorkflowId
-    trigger: Trigger
+    firings: list[Firing]
+
+
+@dataclass(frozen=True, slots=True)
+class Occurrence:
+    """What one poll pass saw on one subscription; exists only inside the tick."""
+
+    subscription: Subscription
+    new_ids: list[str]
+    latest: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +116,7 @@ def emit(event: Event) -> None:
 class Engine:
     provider: AgentProvider = field(default_factory=ClaudeAgentSDKProvider)
     storage: StateStorage = field(default_factory=state_storage)
+    gmail: GmailClient = field(default_factory=gmail_client)
 
     async def active_workflow(self, workflow_id: WorkflowId) -> Workflow:
         workflow = (
@@ -119,15 +134,12 @@ class Engine:
             workflow_doc_id=workflow.uid,
             workflow_id=workflow.workflow_id,
             task_id=workflow.task_id,
-            trigger=fired.trigger,
+            fired_by=fired.firings,
         )
         await run.insert()
         emit(RunCreated(run_id=run.uid, workflow_id=run.workflow_id))
         await self.invoke_agent(run)
         return run
-
-    async def dispatch_event(self, *, workflow_id: WorkflowId, event_type: str, event_key: str) -> Run:
-        return await self.dispatch(TriggerFired(workflow_id, EventTrigger(event_type=event_type, event_key=event_key)))
 
     async def fire_due(self, *, now: datetime) -> list[Run]:
         runs: list[Run] = []
@@ -135,14 +147,100 @@ class Engine:
             since = await workflow_cursor(workflow, now=now)
             runs.extend(
                 [
-                    await self.dispatch(TriggerFired(workflow.workflow_id, trigger))
+                    await self.dispatch(TriggerFired(workflow.workflow_id, [Firing(trigger=trigger)]))
                     for trigger in workflow.triggers
                     if isinstance(trigger, CronTrigger) and cron_due(trigger, now=now, since=since)
                 ]
             )
         return runs
 
+    async def latest_active_workflows(self) -> list[Workflow]:
+        current: dict[WorkflowId, Workflow] = {}
+        async for workflow in Workflow.find(Workflow.status == "active"):
+            if (seen := current.get(workflow.workflow_id)) is None or workflow.version > seen.version:
+                current[workflow.workflow_id] = workflow
+        return list(current.values())
+
+    async def materialize_subscriptions(self, workflow: Workflow) -> None:
+        declared = {
+            (trigger.source, trigger.event, trigger.key)
+            for trigger in workflow.triggers
+            if isinstance(trigger, EventTrigger)
+        }
+        for source, event, key in declared:
+            if source != "gmail" or event not in ("thread", "query"):
+                raise ValueError(f"unknown event trigger {source}/{event} on workflow {workflow.workflow_id}")
+            existing = await Subscription.find_one(
+                Subscription.workflow_id == workflow.workflow_id,
+                Subscription.source == source,
+                Subscription.event == event,
+                Subscription.key == key,
+            )
+            if existing is None:
+                await insert_subscription(workflow.workflow_id, event, key, origin="trigger")
+        async for subscription in Subscription.find(
+            Subscription.workflow_id == workflow.workflow_id, Subscription.origin == "trigger"
+        ):
+            if (subscription.source, subscription.event, subscription.key) not in declared:
+                await subscription.delete()
+
+    async def observe(self, subscription: Subscription) -> Occurrence | None:
+        try:
+            metas = await news_since(self.gmail, subscription)
+        except ThreadNotFound:
+            match subscription.origin:
+                case "agent":
+                    logger.warning("watched thread gone, dropping subscription: {}", subscription.key)
+                    await subscription.delete()
+                case "trigger":
+                    logger.warning("watched thread gone, skipping declared subscription: {}", subscription.key)
+            return None
+        if not metas:
+            return None
+        return Occurrence(subscription=subscription, new_ids=[meta.id for meta in metas], latest=metas[-1].date)
+
+    async def fire_occurrences(self, workflow_id: WorkflowId, occurrences: list[Occurrence]) -> Run:
+        run = await self.dispatch(
+            TriggerFired(
+                workflow_id,
+                [
+                    Firing(
+                        trigger=EventTrigger(
+                            source=occurrence.subscription.source,
+                            event=occurrence.subscription.event,
+                            key=occurrence.subscription.key,
+                        ),
+                        occurrence_ids=occurrence.new_ids,
+                    )
+                    for occurrence in occurrences
+                ],
+            )
+        )
+        if run.status == "succeeded":
+            for occurrence in occurrences:
+                await occurrence.subscription.update(Max({Subscription.watermark: occurrence.latest}))
+        return run
+
+    async def poll_subscriptions(self) -> list[Run]:
+        workflows = await self.latest_active_workflows()
+        for workflow in workflows:
+            await self.materialize_subscriptions(workflow)
+        watched: dict[WorkflowId, list[Subscription]] = {}
+        for subscription in await Subscription.find(
+            In(Subscription.workflow_id, [workflow.workflow_id for workflow in workflows])
+        ).to_list():
+            watched.setdefault(subscription.workflow_id, []).append(subscription)
+        runs: list[Run] = []
+        for workflow_id, subscriptions in watched.items():
+            occurrences = [o for subscription in subscriptions if (o := await self.observe(subscription))]
+            if occurrences:
+                runs.append(await self.fire_occurrences(workflow_id, occurrences))
+        return runs
+
     def build_toolsets(self, run: Run) -> tuple[ToolSet, ...]:
+        async def record(action: Action) -> None:
+            await self.record_action(run, action)
+
         return tools.build_toolsets(
             RunContext(
                 workflow_id=run.workflow_id,
@@ -151,6 +249,8 @@ class Engine:
                 run_id=run.uid,
             ),
             storage=self.storage,
+            gmail=self.gmail,
+            record=record,
         )
 
     async def invoke_agent(self, run: Run) -> None:

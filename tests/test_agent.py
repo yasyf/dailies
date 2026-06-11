@@ -50,6 +50,18 @@ async def test_adapt_dumps_model_results_as_json() -> None:
     }
 
 
+async def test_adapt_dumps_list_of_models_as_json_array() -> None:
+    async def list_result(args: dict[str, Any]) -> Any:
+        return [QueryResult(rows=[{"n": 1}], truncated=False), QueryResult(rows=[], truncated=True)]
+
+    spec = ToolSpec(name="lq", description="d", input_schema={"type": "object"}, invoke=list_result)
+    assert await adapt(spec).handler({}) == {
+        "content": [
+            {"type": "text", "text": '[{"rows": [{"n": 1}], "truncated": false}, {"rows": [], "truncated": true}]'}
+        ]
+    }
+
+
 async def test_adapt_maps_exception_to_is_error() -> None:
     spec = ToolSpec(name="boom", description="d", input_schema={"type": "object"}, invoke=raises)
     assert await adapt(spec).handler({}) == {"content": [{"type": "text", "text": "nope"}], "is_error": True}

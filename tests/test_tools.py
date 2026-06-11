@@ -5,13 +5,14 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from dailies.models import InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId
+from dailies.gmail import MAX_BODY, EmailMessage
+from dailies.models import Action, InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId, utcnow
 from dailies.runtime import RunContext
 from dailies.storage import state_storage
 from dailies.tools import build_toolsets
 from dailies.tools.action import Notification
-from dailies.tools.base import StructuredSink, ToolSet, tool
-from dailies.tools.state import StateToolSet
+from dailies.tools.base import StructuredSink, ToolSet, ToolSpec, tool
+from tests.fakes import FakeGmail
 
 pytestmark = pytest.mark.unit
 
@@ -19,6 +20,29 @@ pytestmark = pytest.mark.unit
 def context() -> RunContext:
     return RunContext(
         workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), task_id=TaskId(uuid4()), run_id=uuid4()
+    )
+
+
+def toolsets(gmail: FakeGmail, recorded: list[Action]) -> tuple[ToolSet, ...]:
+    async def record(action: Action) -> None:
+        recorded.append(action)
+
+    return build_toolsets(context(), storage=state_storage(), gmail=gmail, record=record)
+
+
+def spec_named(sets: tuple[ToolSet, ...], name: str) -> ToolSpec:
+    return next(t.to_spec() for ts in sets for t in ts.get_tools() if t.name == name)
+
+
+def email(message_id: str, *, body: str = "hello") -> EmailMessage:
+    return EmailMessage(
+        id=message_id,
+        thread_id="t1",
+        sender="a@example.com",
+        to="me@example.com",
+        subject="subj",
+        body=body,
+        date=utcnow(),
     )
 
 
@@ -121,13 +145,9 @@ def test_tool_guard_requires_annotations() -> None:
 
 
 VALID_ARGS: dict[str, dict] = {
-    "send_email": {"to": "a", "subject": "s", "body": "b"},
     "notify": {"notification": {"channel": "c", "title": "t", "body": "b"}},
     "record_action": {"kind": "k", "payload": {}},
     "list_actions": {},
-    "get_thread": {"thread_id": "t"},
-    "get_message": {"message_id": "m"},
-    "search_emails": {"query": "q"},
     "fetch_url": {"url": "u"},
     "search_web": {"query": "q"},
 }
@@ -143,9 +163,37 @@ async def test_structured_sink_captures_validated_model() -> None:
 
 
 async def test_every_stub_raises_not_implemented() -> None:
-    for toolset in build_toolsets(context(), storage=state_storage()):
-        if isinstance(toolset, StateToolSet):
-            continue
-        for handle in toolset.get_tools():
-            with pytest.raises(NotImplementedError):
-                await handle.to_spec().invoke(VALID_ARGS[handle.name])
+    sets = toolsets(FakeGmail(), [])
+    for name, args in VALID_ARGS.items():
+        with pytest.raises(NotImplementedError):
+            await spec_named(sets, name).invoke(args)
+
+
+async def test_send_email_records_one_action_after_send() -> None:
+    gmail = FakeGmail()
+    recorded: list[Action] = []
+    action_id = await spec_named(toolsets(gmail, recorded), "send_email").invoke(
+        {"to": "a@b.com", "subject": "s", "body": "b"}
+    )
+    assert [message.to for message in gmail.sent] == ["a@b.com"]
+    assert [action.id for action in recorded] == [action_id]
+    assert (recorded[0].kind, recorded[0].target) == ("email", "a@b.com")
+    assert recorded[0].payload == {"subject": "s", "message_id": "sent-0", "thread_id": "sent-thread-0"}
+
+
+async def test_get_thread_and_search_truncate_bodies() -> None:
+    gmail = FakeGmail()
+    gmail.add(email("m1", body="x" * (MAX_BODY + 1)))
+    sets = toolsets(gmail, [])
+    for name, args in {"get_thread": {"thread_id": "t1"}, "search_emails": {"query": "subj"}}.items():
+        (message,) = await spec_named(sets, name).invoke(args)
+        assert message.truncated is True
+        assert message.body == "x" * MAX_BODY
+
+
+async def test_get_message_returns_full_body() -> None:
+    gmail = FakeGmail()
+    gmail.add(email("m1", body="x" * (MAX_BODY + 1)))
+    message = await spec_named(toolsets(gmail, []), "get_message").invoke({"message_id": "m1"})
+    assert message.truncated is False
+    assert message.body == "x" * (MAX_BODY + 1)

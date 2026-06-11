@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import anyio
 import click
+import httpx
 
 from dailies.agent import ClaudeAgentSDKProvider
+from dailies.connections import INTEGRATIONS, Connection, Integration, NotConnected, connection_store
 from dailies.db import lifespan
 from dailies.engine import Engine, TriggerFired
+from dailies.gmail import NANGO_API, NangoGmailClient, checked
 from dailies.interface import TextualPresenter, run_tui
 from dailies.interview import InterviewRunner
-from dailies.models import ManualTrigger, WorkflowId
+from dailies.models import Firing, ManualTrigger, WorkflowId
+from dailies.tools import ToolSet
+
+AUTH_POLL_INTERVAL = 3.0
+AUTH_TIMEOUT = 300.0
 
 
 @click.group()
@@ -36,6 +44,93 @@ def db_init() -> None:
     anyio.run(go)
 
 
+async def account_email(integration: Integration) -> str:
+    match integration.name:
+        case "gmail":
+            return (await NangoGmailClient(store=connection_store()).profile()).email
+        case unknown:
+            raise KeyError(unknown)
+
+
+async def await_connection(client: httpx.AsyncClient, *, end_user_id: str, integration: Integration) -> Connection:
+    try:
+        with anyio.fail_after(AUTH_TIMEOUT):
+            while True:
+                listing = checked(await client.get("/connections", params={"tags[end_user_id]": end_user_id})).json()
+                if found := next(
+                    (
+                        connection
+                        for connection in listing["connections"]
+                        if connection["provider_config_key"] == integration.provider_config_key
+                        and not connection["errors"]
+                    ),
+                    None,
+                ):
+                    return Connection(
+                        connection_id=found["connection_id"], provider_config_key=found["provider_config_key"]
+                    )
+                await anyio.sleep(AUTH_POLL_INTERVAL)
+    except TimeoutError:
+        raise click.ClickException(
+            f"timed out waiting for the {integration.name} connection — run `dly auth {integration.name}` again"
+        ) from None
+
+
+async def connect_integration(integration: Integration) -> None:
+    headers = {"Authorization": f"Bearer {os.environ['NANGO_SECRET_KEY']}"}
+    end_user_id = f"dly-{uuid4().hex}"
+    async with httpx.AsyncClient(base_url=NANGO_API, headers=headers) as client:
+        session = checked(
+            await client.post(
+                "/connect/sessions",
+                json={
+                    "tags": {"end_user_id": end_user_id},
+                    "allowed_integrations": [integration.provider_config_key],
+                },
+            )
+        ).json()
+        click.echo(f"Complete the connection in your browser: {(link := session['data']['connect_link'])}")
+        click.launch(link)
+        connection = await await_connection(client, end_user_id=end_user_id, integration=integration)
+    await connection_store().store(integration.name, connection)
+    click.echo(f"Authenticated {await account_email(integration)}")
+
+
+@main.group()
+def auth() -> None:
+    """Connect external integrations via Nango."""
+
+
+def auth_command(integration: Integration) -> click.Command:
+    @click.command(integration.name, help=f"Connect {integration.name} through a Nango connect link.")
+    def connect() -> None:
+        anyio.run(connect_integration, integration)
+
+    return connect
+
+
+for integration in INTEGRATIONS.values():
+    auth.add_command(auth_command(integration))
+
+
+@auth.command()
+def status() -> None:
+    """Show each integration's connection, account, and dependent toolsets."""
+
+    async def go() -> None:
+        store = connection_store()
+        for name, integration in INTEGRATIONS.items():
+            users = ", ".join(sorted(ts.__name__ for ts in ToolSet.__subclasses__() if name in ts.integrations))
+            try:
+                await store.load(name)
+            except NotConnected:
+                click.echo(f"{name}: not connected (run `dly auth {name}`) — used by {users}")
+                continue
+            click.echo(f"{name}: connected as {await account_email(integration)} — used by {users}")
+
+    anyio.run(go)
+
+
 @main.command()
 @click.argument("workflow_id", type=click.UUID)
 def run(workflow_id: UUID) -> None:
@@ -43,18 +138,20 @@ def run(workflow_id: UUID) -> None:
 
     async def go() -> None:
         async with lifespan():
-            await Engine().dispatch(TriggerFired(WorkflowId(workflow_id), ManualTrigger()))
+            await Engine().dispatch(TriggerFired(WorkflowId(workflow_id), [Firing(trigger=ManualTrigger())]))
 
     anyio.run(go)
 
 
 @main.command()
 def tick() -> None:
-    """Sweep cron-due workflows and fire a run for each due trigger."""
+    """Sweep cron-due workflows, then poll event subscriptions for news."""
 
     async def go() -> None:
         async with lifespan():
-            await Engine().fire_due(now=datetime.now(UTC))
+            engine = Engine()
+            await engine.fire_due(now=datetime.now(UTC))
+            await engine.poll_subscriptions()
 
     anyio.run(go)
 

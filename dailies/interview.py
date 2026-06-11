@@ -62,8 +62,11 @@ SYNTHESIS_SYSTEM = (
     "Each trigger is one of: cron (a standard 5-field cron string plus an IANA timezone such as "
     "America/Los_Angeles — set the timezone whenever the scenario implies a local time; when a local time is "
     f"implied but no specific zone is named, default to the user's local timezone, {LOCAL_TZ}; never bake an "
-    "offset into the cron fields); event (react to something arriving — an inbound email or reply, a "
-    "webhook, a price change — instead of polling on a clock); or manual (run on demand). "
+    "offset into the cron fields); event (react to something arriving instead of polling on a clock: "
+    "source names the integration and event/key name what to watch — today source gmail with either "
+    "event query and key a Gmail search expression such as from:boss@example.com, or event thread and "
+    "key a Gmail thread id; prefer a query watch unless a concrete thread id is already known); or "
+    "manual (run on demand). "
     "State that several workflows read or write (a counter, a running total) belongs in the task's "
     "shared_ddl, declared exactly once; state used by only one workflow belongs in that workflow's ddl."
 )

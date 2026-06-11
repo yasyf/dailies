@@ -16,6 +16,7 @@ from dailies.models import (
     CronExpr,
     CronTrigger,
     EventTrigger,
+    Firing,
     ManualTrigger,
     PromptStr,
     SchemaStr,
@@ -58,23 +59,23 @@ async def test_dispatch_persists_exactly_one_run(mongo: AsyncMongoClient[dict[st
     workflow = make_workflow()
     await workflow.insert()
     engine = Engine(provider=FakeProvider(AgentResult("ok", ok=True)))
-    await engine.dispatch(TriggerFired(workflow.workflow_id, ManualTrigger()))
-    assert await Run.find(Run.workflow_id == workflow.workflow_id).count() == 1
+    await engine.dispatch(TriggerFired(workflow.workflow_id, [Firing(trigger=ManualTrigger())]))
+    runs = await Run.find(Run.workflow_id == workflow.workflow_id).to_list()
+    assert [run.fired_by for run in runs] == [[Firing(trigger=ManualTrigger())]]
 
 
-async def test_dispatch_event_funnels_through_dispatch(
-    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[TriggerFired] = []
-
-    async def fake_dispatch(self: Engine, fired: TriggerFired) -> None:
-        seen.append(fired)
-
-    monkeypatch.setattr(Engine, "dispatch", fake_dispatch)
-    await Engine().dispatch_event(workflow_id=WorkflowId(uuid4()), event_type="email", event_key="k")
-    assert len(seen) == 1
-    assert isinstance(seen[0].trigger, EventTrigger)
-    assert await Run.find_all().count() == 0
+async def test_dispatch_persists_event_firings(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    workflow = make_workflow()
+    await workflow.insert()
+    engine = Engine(provider=FakeProvider(AgentResult("ok", ok=True)))
+    firings = [
+        Firing(trigger=EventTrigger(source="gmail", event="query", key="from:a@b.com"), occurrence_ids=["m1", "m2"]),
+        Firing(trigger=EventTrigger(source="gmail", event="thread", key="t1"), occurrence_ids=["m3"]),
+    ]
+    run = await engine.dispatch(TriggerFired(workflow.workflow_id, firings))
+    reloaded = await Run.get(run.uid)
+    assert reloaded is not None
+    assert reloaded.fired_by == firings
 
 
 async def test_fire_due_funnels_one_run_per_due_trigger(
@@ -90,8 +91,7 @@ async def test_fire_due_funnels_one_run_per_due_trigger(
 
     monkeypatch.setattr(Engine, "dispatch", fake_dispatch)
     await Engine().fire_due(now=datetime.now(UTC))
-    assert len(seen) == 1
-    assert isinstance(seen[0].trigger, CronTrigger)
+    assert seen == [TriggerFired(workflow.workflow_id, [Firing(trigger=due)])]
     assert await Run.find_all().count() == 0
 
 
@@ -111,7 +111,7 @@ async def test_fire_due_emits_one_run_per_due_trigger_multi(
 
     monkeypatch.setattr(Engine, "dispatch", fake_dispatch)
     await Engine().fire_due(now=datetime.now(UTC))
-    assert len(seen) == 2
+    assert [fired.firings for fired in seen] == [[Firing(trigger=trigger)] for trigger in triggers]
 
 
 async def test_fire_due_skips_inactive_workflows(
@@ -145,7 +145,7 @@ async def test_workflow_cursor_prefers_latest_run(mongo: AsyncMongoClient[dict[s
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
         task_id=workflow.task_id,
-        trigger=ManualTrigger(),
+        fired_by=[Firing(trigger=ManualTrigger())],
     )
     await run.insert()
     now = datetime.now(UTC)
@@ -167,7 +167,7 @@ async def test_invoke_agent_delegates(mongo: AsyncMongoClient[dict[str, Any]]) -
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
         task_id=workflow.task_id,
-        trigger=ManualTrigger(),
+        fired_by=[Firing(trigger=ManualTrigger())],
     )
     await run.insert()
     provider = FakeProvider(AgentResult("done", ok=True))
@@ -190,7 +190,7 @@ async def test_invoke_agent_marks_failure(mongo: AsyncMongoClient[dict[str, Any]
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
         task_id=workflow.task_id,
-        trigger=ManualTrigger(),
+        fired_by=[Firing(trigger=ManualTrigger())],
     )
     await run.insert()
     engine = Engine(provider=FakeProvider(AgentResult("oops", ok=False)))
@@ -207,7 +207,7 @@ async def test_record_status_appends_once(mongo: AsyncMongoClient[dict[str, Any]
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
         task_id=workflow.task_id,
-        trigger=ManualTrigger(),
+        fired_by=[Firing(trigger=ManualTrigger())],
     )
     await run.insert()
     await Engine().record_status(run, StatusUpdate(title="hi"))
@@ -223,7 +223,7 @@ async def test_record_action_appends_once(mongo: AsyncMongoClient[dict[str, Any]
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
         task_id=workflow.task_id,
-        trigger=ManualTrigger(),
+        fired_by=[Firing(trigger=ManualTrigger())],
     )
     await run.insert()
     await Engine().record_action(run, Action(kind="email", target="a@b.com"))

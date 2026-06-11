@@ -32,6 +32,16 @@ class AgentProvider(Protocol):
     async def run(self, request: AgentRequest) -> AgentResult: ...
 
 
+def jsonable(result: object) -> object:
+    match result:
+        case BaseModel():
+            return result.model_dump(mode="json")
+        case list():
+            return [jsonable(item) for item in result]
+        case _:
+            return result
+
+
 def adapt(spec: ToolSpec) -> SdkMcpTool[Any]:
     from claude_agent_sdk import tool
 
@@ -41,8 +51,7 @@ def adapt(spec: ToolSpec) -> SdkMcpTool[Any]:
             result = await spec.invoke(args)
         except Exception as exc:  # tool-execution boundary -> MCP is_error envelope
             return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
-        payload = result.model_dump(mode="json") if isinstance(result, BaseModel) else result
-        return {"content": [{"type": "text", "text": json.dumps(payload, default=str)}]}
+        return {"content": [{"type": "text", "text": json.dumps(jsonable(result), default=str)}]}
 
     return handler
 

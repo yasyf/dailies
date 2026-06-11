@@ -43,7 +43,7 @@ class StateToolSet(ToolSet):
         """
         async with state_session(self.storage, self.context, readonly=True) as db:
             cursor = await db.execute(sql, params or [])
-            rows = await cursor.fetchmany(MAX_ROWS + 1)
+            rows = list(await cursor.fetchmany(MAX_ROWS + 1))
         return QueryResult(rows=[row_dict(row) for row in rows[:MAX_ROWS]], truncated=len(rows) > MAX_ROWS)
 
     @tool

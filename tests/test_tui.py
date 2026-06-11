@@ -67,6 +67,7 @@ async def test_task_detail_shows_full_layout() -> None:
         assert [table.title for table in tables] == ["sent"]
         assert tables[0].row_count == 2
         assert tables[0].caption is None
+        assert "queue (no rows)" in state_text
         assert detail.query_one(".flow-terminus", Static)
 
 

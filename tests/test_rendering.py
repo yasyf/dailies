@@ -3,6 +3,8 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from rich.table import Table
+from rich.text import Text
 
 from dailies.interface.rendering import (
     ColumnDef,
@@ -29,6 +31,7 @@ from dailies.models import (
     WorkflowDraft,
     WorkflowId,
 )
+from dailies.state import MAX_ROWS
 from tests.fakes import FakeWorkflow
 
 pytestmark = pytest.mark.unit
@@ -222,13 +225,20 @@ def test_workflow_card_from_draft() -> None:
         pytest.param([{"v": i} for i in range(7)], 5, 5, "… +2 more", id="over-limit-truncated"),
         pytest.param([{"v": i} for i in range(7)], None, 7, None, id="no-limit-shows-all"),
         pytest.param([{"v": 1}], 5, 1, None, id="under-limit-no-caption"),
-        pytest.param([], 5, 0, "(no rows)", id="empty-captioned"),
+        pytest.param([{"v": i} for i in range(MAX_ROWS)], 5, 5, f"… +{MAX_ROWS - 5}+ more", id="dump-cap-approximate"),
     ],
 )
 def test_state_table_limits(
     rows: list[dict[str, int]], limit: int | None, expected_rows: int, caption: str | None
 ) -> None:
     table = state_table("t", rows, limit=limit)
+    assert isinstance(table, Table)
     assert table.title == "t"
     assert table.row_count == expected_rows
     assert table.caption == caption
+
+
+def test_state_table_empty_renders_visible_text() -> None:
+    text = state_table("sent", [])
+    assert isinstance(text, Text)
+    assert text.plain == "sent (no rows)"

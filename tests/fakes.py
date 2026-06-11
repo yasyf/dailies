@@ -140,7 +140,7 @@ class FakePresenter:
         )
         self.tasks: list[FakeTask] = [self.task]
         self.deleted: list[TaskId] = []
-        self.state: StateDump = {"sent": [{"day": "2026-06-09"}, {"day": "2026-06-10"}]}
+        self.state: StateDump = {"sent": [{"day": "2026-06-09"}, {"day": "2026-06-10"}], "queue": []}
         self.task_state: StateDump = {"totals": [{"sent": 7}]}
 
     async def list_tasks(self) -> Sequence[FakeTask]:

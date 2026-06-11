@@ -24,6 +24,7 @@ from dailies.models import (
     TextBlock,
     Trigger,
 )
+from dailies.state import MAX_ROWS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -217,7 +218,7 @@ def workflow_box(card: WorkflowCard) -> Vertical:
     )
 
 
-def schema_widgets(ddl: str) -> list[Widget]:
+def schema_widgets(ddl: str) -> list[Static]:
     match parse_ddl(ddl):
         case ():
             return [Static(ddl_syntax(ddl), classes="ddl")]
@@ -265,10 +266,13 @@ def workflow_flow(card: WorkflowCard, state: StateDump | None = None) -> Vertica
     )
 
 
-def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]], *, limit: int | None = None) -> Table:
+def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]], *, limit: int | None = None) -> Table | Text:
+    if not rows:
+        return Text(f"{name} (no rows)", style="dim")
     shown = rows if limit is None else rows[:limit]
-    caption = "(no rows)" if not rows else f"… +{len(rows) - len(shown)} more" if len(shown) < len(rows) else None
-    table = Table(*(rows[0] if rows else ()), title=name, caption=caption)
+    hidden = len(rows) - len(shown)
+    over_cap = "+" if len(rows) >= MAX_ROWS else ""
+    table = Table(*rows[0], title=name, caption=f"… +{hidden}{over_cap} more" if hidden else None)
     for row in shown:
         table.add_row(*(repr(value) for value in row.values()))
     return table

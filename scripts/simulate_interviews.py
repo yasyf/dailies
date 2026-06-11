@@ -111,9 +111,7 @@ def trigger_kinds(draft: WorkflowDraft) -> set[str]:
 
 def collectors(proposal: TaskProposal) -> list[WorkflowDraft]:
     return [
-        draft
-        for draft in proposal.workflows
-        if "cron" in (kinds := trigger_kinds(draft)) and "workflow" not in kinds
+        draft for draft in proposal.workflows if "cron" in (kinds := trigger_kinds(draft)) and "workflow" not in kinds
     ]
 
 

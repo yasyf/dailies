@@ -18,48 +18,23 @@ EXA_RESPONSE = {
 }
 
 
-def manifest_for(binary: Path, target: Path) -> Path:
-    target.write_text(json.dumps({"path": str(binary)}))
-    return target
-
-
 def config_for(target: Path, *, enabled: bool) -> Path:
     target.write_text(json.dumps({"claudeInChromeDefaultEnabled": enabled}))
     return target
 
 
-def chrome_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, enabled: bool = True) -> None:
-    binary = tmp_path / "native-host"
-    binary.touch()
-    monkeypatch.setattr("dailies.web.CHROME_MANIFEST", manifest_for(binary, tmp_path / "host.json"))
-    monkeypatch.setattr("dailies.web.CLAUDE_CONFIG", config_for(tmp_path / "claude.json", enabled=enabled))
-
-
-def test_chrome_available_false_without_manifest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    chrome_setup(monkeypatch, tmp_path)
-    monkeypatch.setattr("dailies.web.CHROME_MANIFEST", tmp_path / "missing.json")
-    assert chrome_available() is False
-
-
-def test_chrome_available_false_when_binary_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    chrome_setup(monkeypatch, tmp_path)
-    monkeypatch.setattr("dailies.web.CHROME_MANIFEST", manifest_for(tmp_path / "no-binary", tmp_path / "host.json"))
-    assert chrome_available() is False
-
-
 def test_chrome_available_false_without_claude_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    chrome_setup(monkeypatch, tmp_path)
     monkeypatch.setattr("dailies.web.CLAUDE_CONFIG", tmp_path / "missing-claude.json")
     assert chrome_available() is False
 
 
 def test_chrome_available_false_when_not_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    chrome_setup(monkeypatch, tmp_path, enabled=False)
+    monkeypatch.setattr("dailies.web.CLAUDE_CONFIG", config_for(tmp_path / "claude.json", enabled=False))
     assert chrome_available() is False
 
 
-def test_chrome_available_true_when_set_up_and_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    chrome_setup(monkeypatch, tmp_path)
+def test_chrome_available_true_when_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("dailies.web.CLAUDE_CONFIG", config_for(tmp_path / "claude.json", enabled=True))
     assert chrome_available() is True
 
 

@@ -15,10 +15,6 @@ from dailies.gmail import checked
 from dailies.models import FrozenModel
 
 SEARCH_RESULTS = 8
-CHROME_MANIFEST = (
-    Path("~/Library/Application Support/Google/Chrome/NativeMessagingHosts").expanduser()
-    / "com.anthropic.claude_browser_extension.json"
-)
 CLAUDE_CONFIG = Path("~/.claude.json").expanduser()
 
 
@@ -34,18 +30,11 @@ class SearchResult(FrozenModel):
 
 
 def chrome_available() -> bool:
-    """Whether Claude-in-Chrome is set up for the Claude CLI, enabling native browser tools.
+    """Whether Claude-in-Chrome is enabled for the Claude CLI, adding native browser tools.
 
-    Requires both the Chrome native messaging host (installed with the Claude desktop
-    app) and Claude-in-Chrome enabled in Claude Code (the one-time interactive
-    ``/chrome`` setup, recorded in ``~/.claude.json``).
+    The one-time interactive ``/chrome`` setup records the flag in ``~/.claude.json``.
     """
-    return (
-        CHROME_MANIFEST.exists()
-        and Path(json.loads(CHROME_MANIFEST.read_text())["path"]).exists()
-        and CLAUDE_CONFIG.exists()
-        and bool(json.loads(CLAUDE_CONFIG.read_text()).get("claudeInChromeDefaultEnabled"))
-    )
+    return CLAUDE_CONFIG.exists() and bool(json.loads(CLAUDE_CONFIG.read_text()).get("claudeInChromeDefaultEnabled"))
 
 
 class WebClient(Protocol):

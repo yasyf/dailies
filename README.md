@@ -83,14 +83,14 @@ the package needs neither.
 
 Workflow agents get web access in three tiers:
 
-- **Claude-in-Chrome.** When Claude-in-Chrome is set up — the Chrome native
-  messaging host installed plus the one-time interactive `/chrome` enablement
-  in `claude` (see the [Claude in Chrome](https://code.claude.com/docs/en/chrome)
-  docs) — workflow agents launch with `--chrome` and drive your real, logged-in
-  Chrome through the native browser tools. Chrome must be running when
-  workflows fire, and chrome runs authenticate via your Claude subscription
-  browser login: API-key auth silently disables the chrome bridge, so
-  `ANTHROPIC_API_KEY` is blanked for those agent subprocesses.
+- **Claude-in-Chrome.** When Claude-in-Chrome is enabled — the one-time
+  interactive `/chrome` setup in `claude` (see the
+  [Claude in Chrome](https://code.claude.com/docs/en/chrome) docs) — workflow
+  agents launch with `--chrome` and drive your real, logged-in Chrome through
+  the native browser tools. Chrome must be running with the extension connected
+  when workflows fire, and chrome runs authenticate via your Claude
+  subscription browser login: API-key auth silently disables the chrome bridge,
+  so `ANTHROPIC_API_KEY` is blanked for those agent subprocesses.
 - **`browse` (browser-use).** Without Chrome, agents instead get a `browse(task)`
   tool that runs an autonomous [browser-use](https://browser-use.com) agent in a
   headless ephemeral browser. Provision its Chromium once with

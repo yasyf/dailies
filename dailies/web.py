@@ -17,8 +17,9 @@ from dailies.models import FrozenModel
 SEARCH_RESULTS = 8
 CHROME_MANIFEST = (
     Path("~/Library/Application Support/Google/Chrome/NativeMessagingHosts").expanduser()
-    / "com.anthropic.claude_code_browser_extension.json"
+    / "com.anthropic.claude_browser_extension.json"
 )
+CLAUDE_CONFIG = Path("~/.claude.json").expanduser()
 
 
 class BrowseFailed(RuntimeError):
@@ -33,12 +34,18 @@ class SearchResult(FrozenModel):
 
 
 def chrome_available() -> bool:
-    """Whether Claude Code's Claude-in-Chrome native host is installed, enabling native browser tools.
+    """Whether Claude-in-Chrome is set up for the Claude CLI, enabling native browser tools.
 
-    The manifest is written by Claude Code's one-time interactive ``/chrome`` setup;
-    the Claude desktop app registers a separate host that the CLI cannot use.
+    Requires both the Chrome native messaging host (installed with the Claude desktop
+    app) and Claude-in-Chrome enabled in Claude Code (the one-time interactive
+    ``/chrome`` setup, recorded in ``~/.claude.json``).
     """
-    return CHROME_MANIFEST.exists() and Path(json.loads(CHROME_MANIFEST.read_text())["path"]).exists()
+    return (
+        CHROME_MANIFEST.exists()
+        and Path(json.loads(CHROME_MANIFEST.read_text())["path"]).exists()
+        and CLAUDE_CONFIG.exists()
+        and bool(json.loads(CLAUDE_CONFIG.read_text()).get("claudeInChromeDefaultEnabled"))
+    )
 
 
 class WebClient(Protocol):

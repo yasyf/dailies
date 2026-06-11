@@ -63,7 +63,10 @@ class ClaudeAgentSDKProvider:
 
     Exposes the run's `ToolSpec`s as a single in-process MCP server with no built-ins
     and no filesystem settings; `request.chrome` additionally launches the agent with
-    `--chrome`, adding the native Claude-in-Chrome browser tools.
+    `--chrome`, adding the native Claude-in-Chrome browser tools. Chrome runs blank
+    ``ANTHROPIC_API_KEY`` in the subprocess: API-key auth silently disables the
+    Claude-in-Chrome bridge, so the CLI must authenticate via the subscription
+    browser login instead.
     """
 
     model: str = "claude-opus-4-8"
@@ -95,6 +98,7 @@ class ClaudeAgentSDKProvider:
             max_turns=self.max_turns,
             tools=[],
             extra_args={"chrome": None} if request.chrome else {},
+            env={"ANTHROPIC_API_KEY": ""} if request.chrome else {},
         )
         parts: list[str] = []
         ok = False

@@ -87,9 +87,13 @@ def test_request_chrome_defaults_false() -> None:
     assert AgentRequest(system="s", prompt="p").chrome is False
 
 
-@pytest.mark.parametrize(("chrome", "expected"), [(True, {"chrome": None}), (False, {})], ids=["chrome", "no-chrome"])
+@pytest.mark.parametrize(
+    ("chrome", "extra_args", "env"),
+    [(True, {"chrome": None}, {"ANTHROPIC_API_KEY": ""}), (False, {}, {})],
+    ids=["chrome", "no-chrome"],
+)
 async def test_run_passes_chrome_extra_args(
-    monkeypatch: pytest.MonkeyPatch, chrome: bool, expected: dict[str, Any]
+    monkeypatch: pytest.MonkeyPatch, chrome: bool, extra_args: dict[str, Any], env: dict[str, str]
 ) -> None:
     captured: dict[str, Any] = {}
 
@@ -100,5 +104,6 @@ async def test_run_passes_chrome_extra_args(
 
     monkeypatch.setattr("claude_agent_sdk.query", fake_query)
     result = await ClaudeAgentSDKProvider().run(AgentRequest(system="s", prompt="p", chrome=chrome))
-    assert captured["options"].extra_args == expected
+    assert captured["options"].extra_args == extra_args
+    assert captured["options"].env == env
     assert result == AgentResult(text="", ok=False)

@@ -6,7 +6,7 @@ import pytest
 from rich.syntax import Syntax
 from rich.table import Table
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Label, ListView, Static
+from textual.widgets import Button, DataTable, Label, ListView, Static, TabbedContent
 
 from dailies.interface.textual_app import (
     ConfirmDeleteScreen,
@@ -60,15 +60,49 @@ async def test_task_detail_shows_full_layout() -> None:
             "CREATE TABLE totals (sent INTEGER)",
         ]
         state = detail.query_one(".flow-box.state")
-        state_text = statics_text(state)
-        assert "🗄 sent" in state_text
-        assert "day TEXT" in state_text
-        tables = [widget.content for widget in state.query(Static) if isinstance(widget.content, Table)]
+        tabs = state.query_one(TabbedContent)
+        assert tabs.active == "data"
+        schema_text = statics_text(tabs.get_pane("schema"))
+        assert "🗄 sent" in schema_text
+        assert "day TEXT" in schema_text
+        data_pane = tabs.get_pane("data")
+        tables = [widget.content for widget in data_pane.query(Static) if isinstance(widget.content, Table)]
         assert [table.title for table in tables] == ["sent"]
         assert tables[0].row_count == 2
         assert tables[0].caption is None
-        assert "queue (no rows)" in state_text
+        assert "queue (no rows)" in statics_text(data_pane)
         assert detail.query_one(".flow-terminus", Static)
+
+
+async def test_state_box_defaults_to_schema_when_no_rows() -> None:
+    presenter = FakePresenter()
+    presenter.state = {"sent": [], "queue": []}
+    app = make_app(presenter)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")  # task -> detail
+        await pilot.pause()
+        tabs = app.screen.query_one(".flow-box.state").query_one(TabbedContent)
+        assert tabs.active == "schema"
+        assert tabs.get_pane("schema").display
+        assert not tabs.get_pane("data").display
+
+
+async def test_state_box_tab_switch_shows_schema() -> None:
+    app = make_app(FakePresenter())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")  # task -> detail
+        await pilot.pause()
+        tabs = app.screen.query_one(".flow-box.state").query_one(TabbedContent)
+        assert tabs.active == "data"
+        assert tabs.get_pane("data").display
+        assert not tabs.get_pane("schema").display
+        tabs.active = "schema"
+        await pilot.pause()
+        assert tabs.get_pane("schema").display
+        assert not tabs.get_pane("data").display
+        assert "day TEXT" in statics_text(tabs.get_pane("schema"))
 
 
 async def test_flow_boxes_span_and_triggers_hug() -> None:

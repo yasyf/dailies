@@ -10,6 +10,7 @@ from dailies.interface.rendering import (
     ColumnDef,
     TableSummary,
     WorkflowCard,
+    column_lines,
     excerpt,
     parse_ddl,
     render_firing,
@@ -90,13 +91,43 @@ pytestmark = pytest.mark.unit
         ),
         pytest.param(
             "CREATE TABLE prices (amount DECIMAL(10,2) NOT NULL, note TEXT)",
-            (TableSummary("prices", (ColumnDef("amount", "DECIMAL(10,2) NOT NULL"), ColumnDef("note", "TEXT"))),),
-            id="decimal-comma-survives",
+            (TableSummary("prices", (ColumnDef("amount", "DECIMAL(10,2)"), ColumnDef("note", "TEXT"))),),
+            id="decimal-parens-kept-not-null-stripped",
         ),
         pytest.param(
             "CREATE TABLE t (price INT CHECK (price > 0), label TEXT)",
-            (TableSummary("t", (ColumnDef("price", "INT CHECK (price > 0)"), ColumnDef("label", "TEXT"))),),
-            id="inline-check-survives",
+            (TableSummary("t", (ColumnDef("price", "INT"), ColumnDef("label", "TEXT"))),),
+            id="inline-check-stripped",
+        ),
+        pytest.param(
+            "CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, run_at TEXT NOT NULL)",
+            (TableSummary("jobs", (ColumnDef("id", "INTEGER"), ColumnDef("run_at", "TEXT"))),),
+            id="autoincrement-pk-stripped",
+        ),
+        pytest.param(
+            "CREATE TABLE t (tries INT NOT NULL DEFAULT 0)",
+            (TableSummary("t", (ColumnDef("tries", "INT"),)),),
+            id="not-null-default-stripped",
+        ),
+        pytest.param(
+            "CREATE TABLE t (price INT CHECK(price > 0))",
+            (TableSummary("t", (ColumnDef("price", "INT"),)),),
+            id="check-no-space-stripped",
+        ),
+        pytest.param(
+            "CREATE TABLE t (user_id INT REFERENCES users(id) ON DELETE CASCADE)",
+            (TableSummary("t", (ColumnDef("user_id", "INT"),)),),
+            id="references-stripped",
+        ),
+        pytest.param(
+            "CREATE TABLE m (ratio DOUBLE PRECISION NOT NULL, body VARYING CHARACTER(255))",
+            (TableSummary("m", (ColumnDef("ratio", "DOUBLE PRECISION"), ColumnDef("body", "VARYING CHARACTER(255)"))),),
+            id="multi-word-type-kept",
+        ),
+        pytest.param(
+            "CREATE TABLE t (x, y)",
+            (TableSummary("t", (ColumnDef("x", ""), ColumnDef("y", ""))),),
+            id="bare-column-names",
         ),
         pytest.param("CREATE INDEX idx_sent ON sent (day)", (), id="create-index-only"),
         pytest.param("not sql at all, just prose", (), id="garbage"),
@@ -104,6 +135,20 @@ pytestmark = pytest.mark.unit
 )
 def test_parse_ddl(ddl: str, expected: tuple[TableSummary, ...]) -> None:
     assert parse_ddl(ddl) == expected
+
+
+@pytest.mark.parametrize(
+    ("columns", "expected"),
+    [
+        pytest.param(
+            (ColumnDef("id", "INTEGER"), ColumnDef("run_at", "TEXT")), "id     INTEGER\nrun_at TEXT", id="aligned"
+        ),
+        pytest.param((ColumnDef("x", ""),), "x", id="bare-name-no-trailing-space"),
+        pytest.param((), "—", id="no-columns-dash"),
+    ],
+)
+def test_column_lines(columns: tuple[ColumnDef, ...], expected: str) -> None:
+    assert column_lines(columns) == expected
 
 
 @pytest.mark.parametrize(

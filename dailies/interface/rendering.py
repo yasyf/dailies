@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from itertools import takewhile
 from typing import TYPE_CHECKING
 
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Collapsible, Label, Static
+from textual.widgets import Collapsible, Label, Static, TabbedContent, TabPane
 
 from dailies.models import (
     Block,
@@ -43,6 +44,23 @@ CREATE_TABLE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 CONSTRAINT_KEYWORDS = frozenset({"PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"})
+CONSTRAINT_STARTERS = frozenset(
+    {
+        "PRIMARY",
+        "NOT",
+        "NULL",
+        "UNIQUE",
+        "CHECK",
+        "DEFAULT",
+        "REFERENCES",
+        "COLLATE",
+        "GENERATED",
+        "AS",
+        "AUTOINCREMENT",
+        "CONSTRAINT",
+        "ON",
+    }
+)
 TRIGGER_GLYPHS: Mapping[str, str] = {"cron": "⏰", "event": "⚡", "manual": "✋"}
 RUN_STATUS_STYLES: Mapping[RunStatus, str] = {
     "pending": "dim",
@@ -72,7 +90,10 @@ def column_def(line: str) -> ColumnDef | None:
     name, *rest = line.split()
     if name.upper() in CONSTRAINT_KEYWORDS:
         return None
-    return ColumnDef(name=name.strip("\"'`[]"), type=" ".join(rest))
+    return ColumnDef(
+        name=name.strip("\"'`[]"),
+        type=" ".join(takewhile(lambda token: token.split("(")[0].upper() not in CONSTRAINT_STARTERS, rest)),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +254,11 @@ def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]], *, limit: in
     return table
 
 
+def column_lines(columns: tuple[ColumnDef, ...]) -> str:
+    width = max((len(column.name) for column in columns), default=0)
+    return "\n".join(f"{column.name:<{width}} {column.type}".rstrip() for column in columns) or "—"
+
+
 def schema_widgets(ddl: str) -> list[Static]:
     match parse_ddl(ddl):
         case ():
@@ -243,22 +269,30 @@ def schema_widgets(ddl: str) -> list[Static]:
                 for summary in summaries
                 for widget in (
                     Static(f"🗄 {summary.table}", classes="table-name", markup=False),
-                    Static(
-                        ", ".join(f"{column.name} {column.type}" for column in summary.columns) or "—",
-                        classes="columns",
-                        markup=False,
-                    ),
+                    Static(column_lines(summary.columns), classes="columns", markup=False),
                 )
             ]
 
 
+def tabbed(*panes: TabPane, initial: str) -> TabbedContent:
+    content = TabbedContent(initial=initial)
+    for pane in panes:
+        content.compose_add_child(pane)
+    return content
+
+
 def state_box(ddl: str, state: StateDump | None) -> Vertical:
+    if state is None:
+        return flow_box(*schema_widgets(ddl), title="state", classes="flow-box state")
     return flow_box(
-        *schema_widgets(ddl),
-        *(
-            ()
-            if state is None
-            else (Static(state_table(name, rows, limit=ROW_PREVIEW)) for name, rows in state.items())
+        tabbed(
+            TabPane("schema", *schema_widgets(ddl), id="schema"),
+            TabPane(
+                "data",
+                *(Static(state_table(name, rows, limit=ROW_PREVIEW)) for name, rows in state.items()),
+                id="data",
+            ),
+            initial="data" if any(state.values()) else "schema",
         ),
         title="state",
         classes="flow-box state",

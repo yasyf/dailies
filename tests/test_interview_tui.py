@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 from rich.table import Table
-from textual.widgets import Input, Static
+from textual.widgets import Input, Static, TabbedContent
 
 from dailies.interface import screens
 from dailies.interface.screens import ReviewScreen
@@ -53,7 +53,10 @@ async def test_interview_to_review_and_approve(monkeypatch: pytest.MonkeyPatch) 
         await pilot.pause()
         assert isinstance(app.screen, ReviewScreen)
         state_box = app.screen.query_one(".flow-box.state")
-        assert "🗄 t" in "\n".join(str(widget.render()) for widget in state_box.query(Static))
+        state_text = "\n".join(str(widget.render()) for widget in state_box.query(Static))
+        assert "🗄 t" in state_text
+        assert "x TEXT" in state_text
+        assert not state_box.query(TabbedContent)
         assert not any(isinstance(widget.content, Table) for widget in state_box.query(Static))
 
         await pilot.press("a")

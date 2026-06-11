@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import fcntl
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import anyio
@@ -145,7 +147,12 @@ def run(workflow_id: UUID) -> None:
 
 @main.command()
 def tick() -> None:
-    """Sweep cron-due workflows, then poll event subscriptions for news."""
+    """Sweep cron-due workflows, then poll event subscriptions for news.
+
+    Ticks never overlap: a second observer of the same pending occurrences would
+    dispatch duplicate runs, so the whole sweep holds an exclusive lock and a
+    concurrent invocation exits loudly instead.
+    """
 
     async def go() -> None:
         async with lifespan():
@@ -154,7 +161,14 @@ def tick() -> None:
             await engine.fire_due(now=now)
             await engine.poll_subscriptions(now=now)
 
-    anyio.run(go)
+    lock_path = Path(os.environ["DAILIES_STATE_DIR"]) / "tick.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise click.ClickException("another tick is already running") from None
+        anyio.run(go)
 
 
 def build_interviewer() -> InterviewRunner:

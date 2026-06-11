@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -211,3 +212,12 @@ def test_tick_fires_cron_then_polls_subscriptions(monkeypatch: pytest.MonkeyPatc
     result = CliRunner().invoke(main, ["tick"])
     assert result.exit_code == 0
     assert calls == ["fire_due", "poll_subscriptions"]
+
+
+def test_tick_refuses_concurrent_run(state_dir: Path) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "tick.lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = CliRunner().invoke(main, ["tick"])
+    assert result.exit_code == 1
+    assert "another tick is already running" in result.output

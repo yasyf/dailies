@@ -93,8 +93,22 @@ Workflow agents get web access in three tiers:
   so `ANTHROPIC_API_KEY` is blanked for those agent subprocesses.
 - **`browse` (browser-use).** Without Chrome, agents instead get a `browse(task)`
   tool that runs an autonomous [browser-use](https://browser-use.com) agent in a
-  headless ephemeral browser. Provision its Chromium once with
-  `uvx browser-use install`.
+  headless browser. Provision its Chromium once with `uvx browser-use install`.
+  Each workflow keeps its own profile — cookies and localStorage persist across
+  runs as a Playwright `storage_state` blob saved through the same `StateStorage`
+  layer as the SQLite state (`browser/<workflow_id>.json`), so it carries over to
+  a remote (Modal) backend unchanged. The backend is chosen by
+  `DAILIES_BROWSER_BACKEND` (default `local`; Browserbase and Anchor are the
+  planned remote drop-ins, reached over CDP).
+
+  Seed a workflow's profile with existing logins using
+  `dly browser import-cookies <workflow-id> --domain example.com` — `--domain` is
+  required and repeatable, and matches subdomains. Cookies come from a local
+  browser (`--from-browser chrome|firefox|safari|edge|brave|…`, default `chrome`;
+  reading Chrome triggers a macOS keychain prompt) or from a previously exported
+  file (`--from-file`, either a Playwright `storage_state` JSON or a Netscape
+  `cookies.txt`). Imported cookies feed only the `browse` tool — under
+  Claude-in-Chrome the agent uses your real Chrome profile instead.
 - **`search_web` / `fetch_url` / `scrape` (always on).** Quick Exa search, a plain
   HTTP fetch, and a single-page [Stagehand](https://stagehand.dev) extraction in a
   fresh anonymous headless browser. `scrape` uses your installed Chrome

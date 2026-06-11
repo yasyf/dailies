@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, ClassVar, Literal
 
+from dailies.browser import browser_profile_key
 from dailies.documents import Subscription
 from dailies.gmail import EmailMessage, truncate
 from dailies.models import FrozenModel, WorkflowId, utcnow
@@ -12,8 +13,10 @@ from dailies.tools.base import ToolSet, tool
 from dailies.web import SearchResult
 
 if TYPE_CHECKING:
+    from dailies.browser import BrowserBackend
     from dailies.gmail import GmailClient, MessageMeta
-    from dailies.web import BrowserClient, WebClient
+    from dailies.storage import StateStorage
+    from dailies.web import WebClient
 
 
 class SubscriptionNotFound(LookupError):
@@ -196,9 +199,11 @@ class WebToolSet(ToolSet):
 @dataclass(frozen=True, slots=True)
 class BrowseToolSet(ToolSet):
     context: RunContext
-    browser: BrowserClient
+    browser: BrowserBackend
+    storage: StateStorage
 
     @tool
     async def browse(self, task: str) -> str:
         """Drive a real browser through a multi-step web task and return the outcome."""
-        return await self.browser.browse(task)
+        async with self.storage.lease(browser_profile_key(self.context.workflow_id)) as profile:
+            return await self.browser.browse(task, profile=profile)

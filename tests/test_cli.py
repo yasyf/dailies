@@ -35,7 +35,7 @@ def stub_lifespan(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_help_lists_commands() -> None:
     result = CliRunner().invoke(main, ["--help"])
     assert result.exit_code == 0
-    for command in ("run", "tick", "tui", "interview", "db", "auth"):
+    for command in ("run", "tick", "tui", "interview", "db", "auth", "browser"):
         assert command in result.output
 
 
@@ -56,6 +56,47 @@ def test_auth_unknown_integration_fails_loudly() -> None:
     result = CliRunner().invoke(main, ["auth", "slack"])
     assert result.exit_code == 2
     assert "No such command 'slack'" in result.output
+
+
+def test_browser_import_cookies_reports_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_import(
+        storage: object,
+        workflow_id: object,
+        *,
+        domains: tuple[str, ...],
+        source_browser: str = "chrome",
+        from_file: Path | None = None,
+    ) -> int:
+        captured.update(workflow_id=workflow_id, domains=domains, source_browser=source_browser, from_file=from_file)
+        return 3
+
+    monkeypatch.setattr(cli, "import_cookies", fake_import)
+    workflow_id = uuid4()
+    result = CliRunner().invoke(
+        main, ["browser", "import-cookies", str(workflow_id), "--domain", "github.com", "--domain", "example.com"]
+    )
+    assert result.exit_code == 0
+    assert f"Imported 3 cookies into workflow {workflow_id}" in result.output
+    assert captured == {
+        "workflow_id": workflow_id,
+        "domains": ("github.com", "example.com"),
+        "source_browser": "chrome",
+        "from_file": None,
+    }
+
+
+def test_browser_import_cookies_requires_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "import_cookies", lambda *a, **k: 0)
+    result = CliRunner().invoke(main, ["browser", "import-cookies", str(uuid4())])
+    assert result.exit_code == 2
+    assert "--domain" in result.output
+
+
+def test_browser_import_cookies_bad_uuid() -> None:
+    result = CliRunner().invoke(main, ["browser", "import-cookies", "not-a-uuid", "--domain", "github.com"])
+    assert result.exit_code == 2
 
 
 def mock_clients(monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Request], httpx.Response]) -> None:

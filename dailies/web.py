@@ -1,4 +1,4 @@
-"""Web access for agents: Exa search, plain fetch, Stagehand scrape, and a browser-use fallback."""
+"""Web access for agents: Exa search, plain fetch, and Stagehand scrape."""
 
 from __future__ import annotations
 
@@ -16,10 +16,6 @@ from dailies.models import FrozenModel
 
 SEARCH_RESULTS = 8
 CLAUDE_CONFIG = Path("~/.claude.json").expanduser()
-
-
-class BrowseFailed(RuntimeError):
-    """The browser agent finished without producing a result."""
 
 
 class SearchResult(FrozenModel):
@@ -45,12 +41,6 @@ class WebClient(Protocol):
     async def fetch(self, url: str) -> str: ...
 
     async def scrape(self, url: str, instruction: str) -> str: ...
-
-
-class BrowserClient(Protocol):
-    """Runs an autonomous multi-step browser task; the fallback when Claude-in-Chrome is absent."""
-
-    async def browse(self, task: str) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,27 +111,5 @@ class LiveWebClient:
                 return json.dumps(result, default=str)
 
 
-@dataclass(frozen=True, slots=True)
-class BrowserUseClient:
-    """BrowserClient driving an autonomous browser-use agent in a headless ephemeral chromium."""
-
-    model: str = "claude-sonnet-4-6"
-    max_steps: int = 40
-
-    async def browse(self, task: str) -> str:
-        from browser_use import Agent, Browser, ChatAnthropic
-
-        history = await Agent(
-            task=task, llm=ChatAnthropic(model=self.model), browser=Browser(headless=True, user_data_dir=None)
-        ).run(max_steps=self.max_steps)
-        if (result := history.final_result()) is None:
-            raise BrowseFailed(task)
-        return result
-
-
 def web_client() -> WebClient:
     return LiveWebClient()
-
-
-def browser_client() -> BrowserClient:
-    return BrowserUseClient()

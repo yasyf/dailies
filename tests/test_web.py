@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from dailies.web import BrowserUseClient, LiveWebClient, SearchResult, browser_client, chrome_available, web_client
+from dailies.web import LiveWebClient, SearchResult, chrome_available, web_client
 
 pytestmark = pytest.mark.unit
 
@@ -87,6 +87,5 @@ async def test_fetch_truncates_at_limit() -> None:
     assert len(await LiveWebClient(transport=transport).fetch("https://example.com")) == LiveWebClient.FETCH_LIMIT
 
 
-def test_factories_return_live_clients() -> None:
+def test_web_factory_returns_live_client() -> None:
     assert isinstance(web_client(), LiveWebClient)
-    assert isinstance(browser_client(), BrowserUseClient)

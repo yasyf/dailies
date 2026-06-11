@@ -7,9 +7,11 @@ keep the pilot test independent of MongoDB.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from pydantic import JsonValue
@@ -265,10 +267,13 @@ class FakeWeb:
 @dataclass(frozen=True, slots=True)
 class FakeBrowser:
     tasks: list[str] = field(default_factory=list)
+    profiles: list[Path] = field(default_factory=list)
     result: str = "done"
 
-    async def browse(self, task: str) -> str:
+    async def browse(self, task: str, *, profile: Path) -> str:
         self.tasks.append(task)
+        self.profiles.append(profile)
+        profile.write_text(json.dumps({"cookies": [], "origins": []}))
         return self.result
 
 

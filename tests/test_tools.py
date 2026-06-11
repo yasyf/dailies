@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
+from dailies.browser import browser_profile_key
 from dailies.gmail import MAX_BODY, EmailMessage
 from dailies.models import Action, InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId, utcnow
 from dailies.runtime import RunContext
@@ -12,6 +15,7 @@ from dailies.storage import state_storage
 from dailies.tools import build_toolsets
 from dailies.tools.action import Notification
 from dailies.tools.base import StructuredSink, ToolSet, ToolSpec, tool
+from dailies.tools.inputs import BrowseToolSet
 from dailies.web import SearchResult
 from tests.fakes import FakeBrowser, FakeGmail, FakeWeb
 
@@ -19,9 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 def context() -> RunContext:
-    return RunContext(
-        workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), task_id=TaskId(uuid4()), run_id=uuid4()
-    )
+    return RunContext(workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), task_id=TaskId(uuid4()), run_id=uuid4())
 
 
 def toolsets(
@@ -241,3 +243,14 @@ def test_web_tool_schemas_require_args() -> None:
     assert spec_named(sets, "scrape").input_schema["required"] == ["url", "instruction"]
     assert spec_named(sets, "browse").input_schema["required"] == ["task"]
     assert spec_named(sets, "search_web").input_schema["required"] == ["query"]
+
+
+async def test_browse_leases_workflow_profile() -> None:
+    ctx = context()
+    browser = FakeBrowser(result="ok")
+    toolset = BrowseToolSet(ctx, browser, state_storage())
+    spec = next(t.to_spec() for t in toolset.get_tools() if t.name == "browse")
+    assert await spec.invoke({"task": "go"}) == "ok"
+    expected = Path(os.environ["DAILIES_STATE_DIR"]) / browser_profile_key(ctx.workflow_id)
+    assert browser.profiles == [expected]
+    assert expected.exists()

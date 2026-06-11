@@ -11,6 +11,7 @@ import click
 import httpx
 
 from dailies.agent import ClaudeAgentSDKProvider
+from dailies.browser import COOKIE_BROWSERS, import_cookies
 from dailies.connections import INTEGRATIONS, Connection, Integration, NotConnected, connection_store
 from dailies.db import lifespan
 from dailies.engine import Engine, TriggerFired
@@ -18,6 +19,7 @@ from dailies.gmail import NANGO_API, NangoGmailClient, checked
 from dailies.interface import TextualPresenter, run_tui
 from dailies.interview import InterviewRunner
 from dailies.models import Firing, ManualTrigger, WorkflowId
+from dailies.storage import state_storage
 from dailies.tools import ToolSet
 
 AUTH_POLL_INTERVAL = 3.0
@@ -129,6 +131,46 @@ def status() -> None:
                 click.echo(f"{name}: not connected (run `dly auth {name}`) — used by {users}")
                 continue
             click.echo(f"{name}: connected as {await account_email(integration)} — used by {users}")
+
+    anyio.run(go)
+
+
+@main.group()
+def browser() -> None:
+    """Manage the per-workflow browser profile used by the browse tool."""
+
+
+@browser.command("import-cookies")
+@click.argument("workflow_id", type=click.UUID)
+@click.option(
+    "--domain", "domains", multiple=True, required=True, help="Domain to import (repeatable; matches subdomains)."
+)
+@click.option(
+    "--from-browser",
+    type=click.Choice(COOKIE_BROWSERS),
+    default="chrome",
+    show_default=True,
+    help="Local browser to read cookies from.",
+)
+@click.option(
+    "--from-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Import from a storage_state JSON or Netscape cookies.txt instead of a local browser.",
+)
+def import_cookies_cmd(workflow_id: UUID, domains: tuple[str, ...], from_browser: str, from_file: Path | None) -> None:
+    """Seed the workflow's browser profile with cookies for the given domains.
+
+    Reads the local browser's cookie store (a macOS keychain prompt may appear) or, with
+    --from-file, a previously exported file, and merges the matching cookies into
+    browser/<workflow_id>.json in the state store.
+    """
+
+    async def go() -> None:
+        count = await import_cookies(
+            state_storage(), WorkflowId(workflow_id), domains=domains, source_browser=from_browser, from_file=from_file
+        )
+        click.echo(f"Imported {count} cookies into workflow {workflow_id}")
 
     anyio.run(go)
 

@@ -12,6 +12,7 @@ from pymongo.errors import DuplicateKeyError
 
 from dailies import tools
 from dailies.agent import AgentProvider, AgentRequest, ClaudeAgentSDKProvider
+from dailies.browser import BrowserBackend, browser_backend
 from dailies.documents import Run, Subscription, Workflow
 from dailies.gmail import GmailClient, ThreadNotFound, gmail_client
 from dailies.models import (
@@ -32,7 +33,7 @@ from dailies.runtime import RunContext
 from dailies.storage import StateStorage, state_storage
 from dailies.tools import ToolSet
 from dailies.tools.inputs import insert_subscription, news_since
-from dailies.web import BrowserClient, WebClient, browser_client, chrome_available, web_client
+from dailies.web import WebClient, chrome_available, web_client
 
 # First-sweep lookback: a long-idle workflow fires at most one slot within this window
 # (fire-at-most-once-per-sweep, no catch-up). Tune to match the dly tick cadence.
@@ -172,7 +173,7 @@ class Engine:
     storage: StateStorage = field(default_factory=state_storage)
     gmail: GmailClient = field(default_factory=gmail_client)
     web: WebClient = field(default_factory=web_client)
-    browser: BrowserClient = field(default_factory=browser_client)
+    browser: BrowserBackend = field(default_factory=browser_backend)
     chrome: bool = field(default_factory=chrome_available)
 
     async def active_workflow(self, workflow_id: WorkflowId) -> Workflow:

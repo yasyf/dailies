@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -237,28 +236,15 @@ def test_run_rejects_bad_uuid() -> None:
     assert result.exit_code == 2
 
 
-def test_tick_fires_cron_then_polls_subscriptions(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
+def test_tick_invokes_engine_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    ticks: list[datetime] = []
 
-    async def fake_fire(self: Engine, *, now: datetime) -> list[object]:
-        calls.append("fire_due")
+    async def fake_tick(self: Engine, *, now: datetime) -> list[object]:
+        ticks.append(now)
         return []
 
-    async def fake_poll(self: Engine, *, now: datetime) -> list[object]:
-        calls.append("poll_subscriptions")
-        return []
-
-    monkeypatch.setattr(Engine, "fire_due", fake_fire)
-    monkeypatch.setattr(Engine, "poll_subscriptions", fake_poll)
+    monkeypatch.setattr(Engine, "tick", fake_tick)
     result = CliRunner().invoke(main, ["tick"])
     assert result.exit_code == 0
-    assert calls == ["fire_due", "poll_subscriptions"]
-
-
-def test_tick_refuses_concurrent_run(state_dir: Path) -> None:
-    state_dir.mkdir(parents=True, exist_ok=True)
-    with (state_dir / "tick.lock").open("w") as held:
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        result = CliRunner().invoke(main, ["tick"])
-    assert result.exit_code == 1
-    assert "another tick is already running" in result.output
+    assert len(ticks) == 1
+    assert ticks[0].tzinfo is not None

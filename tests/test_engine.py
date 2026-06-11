@@ -78,7 +78,7 @@ async def test_dispatch_persists_event_firings(mongo: AsyncMongoClient[dict[str,
     assert reloaded.fired_by == firings
 
 
-async def test_fire_due_funnels_one_run_per_due_trigger(
+async def test_tick_funnels_one_run_per_due_trigger(
     mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     due = CronTrigger(cron_expression=CronExpr("*/1 * * * *"))
@@ -90,12 +90,12 @@ async def test_fire_due_funnels_one_run_per_due_trigger(
         seen.append(fired)
 
     monkeypatch.setattr(Engine, "dispatch", fake_dispatch)
-    await Engine().fire_due(now=datetime.now(UTC))
+    await Engine().tick(now=datetime.now(UTC))
     assert seen == [TriggerFired(workflow.workflow_id, [Firing(trigger=due)])]
     assert await Run.find_all().count() == 0
 
 
-async def test_fire_due_emits_one_run_per_due_trigger_multi(
+async def test_tick_emits_one_run_per_due_trigger_multi(
     mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     triggers = [
@@ -110,11 +110,11 @@ async def test_fire_due_emits_one_run_per_due_trigger_multi(
         seen.append(fired)
 
     monkeypatch.setattr(Engine, "dispatch", fake_dispatch)
-    await Engine().fire_due(now=datetime.now(UTC))
+    await Engine().tick(now=datetime.now(UTC))
     assert [fired.firings for fired in seen] == [[Firing(trigger=trigger)] for trigger in triggers]
 
 
-async def test_fire_due_skips_inactive_workflows(
+async def test_tick_skips_inactive_workflows(
     mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     due = CronTrigger(cron_expression=CronExpr("*/1 * * * *"))
@@ -126,7 +126,7 @@ async def test_fire_due_skips_inactive_workflows(
         seen.append(fired)
 
     monkeypatch.setattr(Engine, "dispatch", fake_dispatch)
-    await Engine().fire_due(now=datetime.now(UTC))
+    await Engine().tick(now=datetime.now(UTC))
     assert seen == []
 
 

@@ -109,7 +109,7 @@ async def test_poll_materializes_workflow_subscription(mongo: AsyncMongoClient[d
     await upstream.insert()
     await downstream.insert()
     before = utcnow().replace(microsecond=0)
-    assert await engine().poll_subscriptions(now=utcnow()) == []
+    assert await engine().tick(now=utcnow()) == []
     stored = await subscription_for(downstream)
     assert (stored.source, stored.event, stored.key, stored.origin) == (
         "workflow",
@@ -126,12 +126,12 @@ async def test_new_version_dropping_workflow_trigger_prunes(mongo: AsyncMongoCli
     downstream = make_workflow(task_id=upstream.task_id, name="decider", triggers=[completion_trigger(upstream)])
     await upstream.insert()
     await downstream.insert()
-    await engine().poll_subscriptions(now=utcnow())
+    await engine().tick(now=utcnow())
     assert await Subscription.find_all().count() == 1
     await make_workflow(
         task_id=downstream.task_id, workflow_id=downstream.workflow_id, version=2, name="decider"
     ).insert()
-    await engine().poll_subscriptions(now=utcnow())
+    await engine().tick(now=utcnow())
     assert await Subscription.find_all().count() == 0
 
 
@@ -141,18 +141,16 @@ async def test_upstream_completion_fires_one_run(mongo: AsyncMongoClient[dict[st
     await upstream.insert()
     await downstream.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     finished = future(5)
     completion = await completed_run(upstream, finished_at=finished)
-    (run,) = await eng.poll_subscriptions(now=minutes_ahead(10))
+    (run,) = await eng.tick(now=minutes_ahead(10))
     refreshed = await reloaded(run)
     assert refreshed.workflow_id == downstream.workflow_id
     assert refreshed.status == "succeeded"
-    assert refreshed.fired_by == [
-        Firing(trigger=completion_trigger(upstream), occurrence_ids=[str(completion.uid)])
-    ]
+    assert refreshed.fired_by == [Firing(trigger=completion_trigger(upstream), occurrence_ids=[str(completion.uid)])]
     assert (await subscription_for(downstream)).watermark == finished
-    assert await eng.poll_subscriptions(now=minutes_ahead(10)) == []
+    assert await eng.tick(now=minutes_ahead(10)) == []
     assert await Run.find_all().count() == 2
 
 
@@ -169,11 +167,11 @@ async def test_two_upstream_completions_batch_into_one_run_with_two_firings(
     for workflow in (tracker_a, tracker_b, downstream):
         await workflow.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     finished_a, finished_b = future(5), future(6)
     run_a = await completed_run(tracker_a, finished_at=finished_a)
     run_b = await completed_run(tracker_b, finished_at=finished_b)
-    (run,) = await eng.poll_subscriptions(now=minutes_ahead(10))
+    (run,) = await eng.tick(now=minutes_ahead(10))
     refreshed = await reloaded(run)
     assert refreshed.workflow_id == downstream.workflow_id
     assert completion_firings(refreshed) == {
@@ -194,11 +192,11 @@ async def test_multiple_completions_of_same_upstream_one_firing(mongo: AsyncMong
     await upstream.insert()
     await downstream.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     earlier, later = future(5), future(6)
     second = await completed_run(upstream, finished_at=later)
     first = await completed_run(upstream, finished_at=earlier)
-    (run,) = await eng.poll_subscriptions(now=minutes_ahead(10))
+    (run,) = await eng.tick(now=minutes_ahead(10))
     assert completion_firings(await reloaded(run)) == {upstream.workflow_id: [str(first.uid), str(second.uid)]}
     assert (await subscription_for(downstream)).watermark == later
 
@@ -209,13 +207,13 @@ async def test_settle_window_holds_then_fires(mongo: AsyncMongoClient[dict[str, 
     await upstream.insert()
     await downstream.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     seeded = (await subscription_for(downstream)).watermark
     await completed_run(upstream, finished_at=future(60))
-    assert await eng.poll_subscriptions(now=minutes_ahead(2)) == []
+    assert await eng.tick(now=minutes_ahead(2)) == []
     assert (await subscription_for(downstream)).watermark == seeded
     assert await Run.find_all().count() == 1
-    (run,) = await eng.poll_subscriptions(now=minutes_ahead(10))
+    (run,) = await eng.tick(now=minutes_ahead(10))
     assert (await reloaded(run)).workflow_id == downstream.workflow_id
 
 
@@ -225,10 +223,10 @@ async def test_chatty_upstream_fires_after_max_hold(mongo: AsyncMongoClient[dict
     await upstream.insert()
     await downstream.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     first = await completed_run(upstream, finished_at=future(5))
     second = await completed_run(upstream, finished_at=(utcnow() + timedelta(minutes=14)).replace(microsecond=0))
-    (run,) = await eng.poll_subscriptions(now=minutes_ahead(16))
+    (run,) = await eng.tick(now=minutes_ahead(16))
     assert completion_firings(await reloaded(run)) == {upstream.workflow_id: [str(first.uid), str(second.uid)]}
 
 
@@ -241,8 +239,8 @@ async def test_completion_during_materializing_tick_not_lost(mongo: AsyncMongoCl
     finished = (utcnow() - timedelta(minutes=1)).replace(microsecond=0)
     completion = await completed_run(upstream, finished_at=finished)
     eng = engine()
-    assert await eng.poll_subscriptions(now=tick_now) == []
-    (run,) = await eng.poll_subscriptions(now=minutes_ahead(10))
+    assert await eng.tick(now=tick_now) == []
+    (run,) = await eng.tick(now=minutes_ahead(10))
     assert completion_firings(await reloaded(run)) == {upstream.workflow_id: [str(completion.uid)]}
 
 
@@ -254,13 +252,13 @@ async def test_concurrent_materialize_tolerates_duplicate_insert(
     await upstream.insert()
     await downstream.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
 
     async def stale_find_one(*args: Any, **kwargs: Any) -> None:
         return None
 
     monkeypatch.setattr(Subscription, "find_one", stale_find_one)
-    assert await eng.poll_subscriptions(now=utcnow()) == []
+    assert await eng.tick(now=utcnow()) == []
     assert await Subscription.find_all().count() == 1
 
 
@@ -275,11 +273,11 @@ async def test_fresh_completion_holds_older_sibling_completion(mongo: AsyncMongo
     for workflow in (tracker_a, tracker_b, downstream):
         await workflow.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     run_a = await completed_run(tracker_a, finished_at=future(5))
     run_b = await completed_run(tracker_b, finished_at=future(9 * 60))
-    assert await eng.poll_subscriptions(now=minutes_ahead(10)) == []
-    (run,) = await eng.poll_subscriptions(now=minutes_ahead(20))
+    assert await eng.tick(now=minutes_ahead(10)) == []
+    (run,) = await eng.tick(now=minutes_ahead(20))
     assert completion_firings(await reloaded(run)) == {
         tracker_a.workflow_id: [str(run_a.uid)],
         tracker_b.workflow_id: [str(run_b.uid)],
@@ -295,7 +293,7 @@ async def test_settle_does_not_hold_gmail_news(mongo: AsyncMongoClient[dict[str,
     await upstream.insert()
     await downstream.insert()
     eng = engine(gmail)
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     gmail.add(
         EmailMessage(
             id="m1",
@@ -308,9 +306,9 @@ async def test_settle_does_not_hold_gmail_news(mongo: AsyncMongoClient[dict[str,
         )
     )
     completion = await completed_run(upstream, finished_at=future(9 * 60))
-    (mail_run,) = await eng.poll_subscriptions(now=minutes_ahead(10))
+    (mail_run,) = await eng.tick(now=minutes_ahead(10))
     assert (await reloaded(mail_run)).fired_by == [Firing(trigger=QUERY_TRIGGER, occurrence_ids=["m1"])]
-    (completion_run,) = await eng.poll_subscriptions(now=minutes_ahead(20))
+    (completion_run,) = await eng.tick(now=minutes_ahead(20))
     assert (await reloaded(completion_run)).fired_by == [
         Firing(trigger=completion_trigger(upstream), occurrence_ids=[str(completion.uid)])
     ]
@@ -322,14 +320,14 @@ async def test_failed_downstream_run_keeps_watermark_and_refires(mongo: AsyncMon
     await upstream.insert()
     await downstream.insert()
     failing = engine(ok=False)
-    await failing.poll_subscriptions(now=utcnow())
+    await failing.tick(now=utcnow())
     seeded = (await subscription_for(downstream)).watermark
     finished = future(5)
     completion = await completed_run(upstream, finished_at=finished)
-    (failed,) = await failing.poll_subscriptions(now=minutes_ahead(10))
+    (failed,) = await failing.tick(now=minutes_ahead(10))
     assert (await reloaded(failed)).status == "failed"
     assert (await subscription_for(downstream)).watermark == seeded
-    (retried,) = await engine().poll_subscriptions(now=minutes_ahead(10))
+    (retried,) = await engine().tick(now=minutes_ahead(10))
     refreshed = await reloaded(retried)
     assert refreshed.status == "succeeded"
     assert refreshed.fired_by == [Firing(trigger=completion_trigger(upstream), occurrence_ids=[str(completion.uid)])]
@@ -342,10 +340,10 @@ async def test_failed_upstream_run_does_not_fire(mongo: AsyncMongoClient[dict[st
     await upstream.insert()
     await downstream.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     seeded = (await subscription_for(downstream)).watermark
     await completed_run(upstream, finished_at=future(5), status="failed")
-    assert await eng.poll_subscriptions(now=minutes_ahead(10)) == []
+    assert await eng.tick(now=minutes_ahead(10)) == []
     assert (await subscription_for(downstream)).watermark == seeded
     assert await Run.find_all().count() == 1
 
@@ -356,9 +354,9 @@ async def test_running_upstream_not_observed(mongo: AsyncMongoClient[dict[str, A
     await upstream.insert()
     await downstream.insert()
     eng = engine()
-    await eng.poll_subscriptions(now=utcnow())
+    await eng.tick(now=utcnow())
     await completed_run(upstream, finished_at=None, status="running")
-    assert await eng.poll_subscriptions(now=minutes_ahead(10)) == []
+    assert await eng.tick(now=minutes_ahead(10)) == []
 
 
 async def test_unknown_subscription_source_crashes(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
@@ -372,5 +370,5 @@ async def test_unknown_subscription_source_crashes(mongo: AsyncMongoClient[dict[
         watermark=utcnow(),
         origin="agent",
     ).insert()
-    with pytest.raises(ValueError, match="unknown subscription source"):
-        await engine().poll_subscriptions(now=utcnow())
+    with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="unknown subscription source")):
+        await engine().tick(now=utcnow())

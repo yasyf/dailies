@@ -115,5 +115,15 @@ class Subscription(TimestampedDocument):
         ]
 
 
+class WorkflowLease(TimestampedDocument):
+    workflow_id: WorkflowId
+    token: UUID
+    expires_at: datetime
+
+    class Settings:
+        name = "workflow_leases"
+        indexes = [IndexModel([("workflow_id", ASCENDING)], unique=True)]
+
+
 def document_models() -> list[type[Document]]:
-    return [Task, Workflow, Run, Subscription]
+    return [Task, Workflow, Run, Subscription, WorkflowLease]

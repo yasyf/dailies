@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from beanie.operators import GT, In, Max
+import anyio
+from beanie import UpdateResponse
+from beanie.operators import GT, LTE, Max, Set
 from croniter import croniter
 from loguru import logger
 from pymongo.errors import DuplicateKeyError
@@ -13,7 +15,7 @@ from pymongo.errors import DuplicateKeyError
 from dailies import tools
 from dailies.agent import AgentProvider, AgentRequest, ClaudeAgentSDKProvider
 from dailies.browser import BrowserBackend, browser_backend
-from dailies.documents import Run, Subscription, Workflow
+from dailies.documents import Run, Subscription, Workflow, WorkflowLease
 from dailies.gmail import GmailClient, ThreadNotFound, gmail_client
 from dailies.models import (
     Action,
@@ -27,6 +29,7 @@ from dailies.models import (
     Trigger,
     WorkflowId,
     WorkflowTrigger,
+    new_uuid,
     utcnow,
 )
 from dailies.runtime import RunContext
@@ -46,6 +49,15 @@ LOOKBACK = timedelta(days=1)
 # so a chatty upstream cannot starve its downstream.
 SETTLE_WINDOW = timedelta(minutes=5)
 MAX_HOLD = timedelta(minutes=15)
+
+# Per-workflow Mongo lease: a tick claims a workflow before firing for it, heartbeats
+# while the run executes, and releases on completion. Overlapping ticks — this host or
+# another sharing the database — skip leased workflows and process the rest. The TTL
+# absorbs a one-minute laptop-sleep blip plus several missed beats; a holder dead longer
+# than that loses the workflow, and the next claimant re-fires the pending batch
+# (at-least-once). Lease clocks are always wall time, never the tick's logical `now`.
+LEASE_HEARTBEAT = timedelta(seconds=20)
+LEASE_TTL = timedelta(minutes=3)
 
 SYSTEM = (
     "You are the dailies workflow runner. Execute the user's workflow prompt using only the provided "
@@ -79,6 +91,54 @@ def cron_due(trigger: CronTrigger, *, now: datetime, since: datetime) -> bool:
 async def workflow_cursor(workflow: Workflow, *, now: datetime) -> datetime:
     latest = await Run.find(Run.workflow_doc_id == workflow.uid).sort("-created_at").first_or_none()
     return max(latest.created_at if latest else workflow.created_at, now - LOOKBACK)
+
+
+# Claim shape is insert-then-takeover, not FindOne.upsert: beanie's upsert(on_insert=...)
+# falls back to a separate insert_one and is not atomic.
+async def claim_lease(workflow_id: WorkflowId) -> WorkflowLease | None:
+    now = utcnow()
+    try:
+        return await WorkflowLease(workflow_id=workflow_id, token=new_uuid(), expires_at=now + LEASE_TTL).insert()
+    except DuplicateKeyError:
+        return await WorkflowLease.find_one(
+            WorkflowLease.workflow_id == workflow_id, LTE(WorkflowLease.expires_at, now)
+        ).update(
+            Set(
+                {
+                    WorkflowLease.token: new_uuid(),
+                    WorkflowLease.expires_at: now + LEASE_TTL,
+                    WorkflowLease.updated_at: now,
+                }
+            ),
+            response_type=UpdateResponse.NEW_DOCUMENT,
+        )
+
+
+async def extend_lease(lease: WorkflowLease) -> WorkflowLease | None:
+    now = utcnow()
+    return await WorkflowLease.find_one(
+        WorkflowLease.workflow_id == lease.workflow_id, WorkflowLease.token == lease.token
+    ).update(
+        Set({WorkflowLease.expires_at: now + LEASE_TTL, WorkflowLease.updated_at: now}),
+        response_type=UpdateResponse.NEW_DOCUMENT,
+    )
+
+
+async def release_lease(lease: WorkflowLease) -> None:
+    if (
+        result := await WorkflowLease.find_one(
+            WorkflowLease.workflow_id == lease.workflow_id, WorkflowLease.token == lease.token
+        ).delete()
+    ) is None or result.deleted_count == 0:
+        logger.warning("lease already taken over, not releasing: workflow={}", lease.workflow_id)
+
+
+async def lease_heartbeat(lease: WorkflowLease) -> None:
+    while True:
+        await anyio.sleep(LEASE_HEARTBEAT.total_seconds())
+        if await extend_lease(lease) is None:
+            logger.warning("lease lost mid-run: workflow={}", lease.workflow_id)
+            return
 
 
 def subscription_key(trigger: Trigger, *, workflow: Workflow) -> tuple[str, str, str] | None:
@@ -199,18 +259,35 @@ class Engine:
         await self.invoke_agent(run)
         return run
 
-    async def fire_due(self, *, now: datetime) -> list[Run]:
-        runs: list[Run] = []
-        async for workflow in Workflow.find(Workflow.status == "active"):
-            since = await workflow_cursor(workflow, now=now)
-            runs.extend(
-                [
-                    await self.dispatch(TriggerFired(workflow.workflow_id, [Firing(trigger=trigger)]))
-                    for trigger in workflow.triggers
-                    if isinstance(trigger, CronTrigger) and cron_due(trigger, now=now, since=since)
-                ]
-            )
+    async def tick(self, *, now: datetime) -> list[Run]:
+        return [
+            run
+            for workflow in await self.latest_active_workflows()
+            for run in await self.tick_workflow(workflow, now=now)
+        ]
+
+    async def tick_workflow(self, workflow: Workflow, *, now: datetime) -> list[Run]:
+        if (lease := await claim_lease(workflow.workflow_id)) is None:
+            logger.info("workflow leased by another tick, skipping: {}", workflow.workflow_id)
+            return []
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(lease_heartbeat, lease)
+            await self.materialize_subscriptions(workflow, now=now, lease=lease)
+            runs = [
+                *await self.fire_due_workflow(workflow, now=now),
+                *await self.poll_workflow(workflow, now=now, lease=lease),
+            ]
+            tg.cancel_scope.cancel()
+        await release_lease(lease)
         return runs
+
+    async def fire_due_workflow(self, workflow: Workflow, *, now: datetime) -> list[Run]:
+        since = await workflow_cursor(workflow, now=now)
+        return [
+            await self.dispatch(TriggerFired(workflow.workflow_id, [Firing(trigger=trigger)]))
+            for trigger in workflow.triggers
+            if isinstance(trigger, CronTrigger) and cron_due(trigger, now=now, since=since)
+        ]
 
     async def latest_active_workflows(self) -> list[Workflow]:
         current: dict[WorkflowId, Workflow] = {}
@@ -219,7 +296,7 @@ class Engine:
                 current[workflow.workflow_id] = workflow
         return list(current.values())
 
-    async def materialize_subscriptions(self, workflow: Workflow, *, now: datetime) -> None:
+    async def materialize_subscriptions(self, workflow: Workflow, *, now: datetime, lease: WorkflowLease) -> None:
         declared = {watch for trigger in workflow.triggers if (watch := subscription_key(trigger, workflow=workflow))}
         for source, event, key in declared:
             existing = await Subscription.find_one(
@@ -233,6 +310,12 @@ class Engine:
                     await insert_subscription(workflow.workflow_id, source, event, key, watermark=now, origin="trigger")
                 except DuplicateKeyError:
                     logger.info("subscription already materialized by a concurrent tick: {}/{}/{}", source, event, key)
+        # Pruning with a stale workflow view would delete a successor's re-materialized
+        # subscription and reseed its watermark, silently dropping the events in between —
+        # the one stale write that loses data instead of duplicating it. Fence it.
+        if await extend_lease(lease) is None:
+            logger.warning("lease lost before prune, skipping: workflow={}", workflow.workflow_id)
+            return
         async for subscription in Subscription.find(
             Subscription.workflow_id == workflow.workflow_id, Subscription.origin == "trigger"
         ):
@@ -287,7 +370,9 @@ class Engine:
             latest=completions[-1][1],
         )
 
-    async def fire_occurrences(self, workflow_id: WorkflowId, occurrences: list[Occurrence]) -> Run:
+    async def fire_occurrences(
+        self, workflow_id: WorkflowId, occurrences: list[Occurrence], *, lease: WorkflowLease
+    ) -> Run:
         run = await self.dispatch(
             TriggerFired(
                 workflow_id,
@@ -297,26 +382,28 @@ class Engine:
                 ],
             )
         )
-        if run.status == "succeeded":
-            for occurrence in occurrences:
-                await occurrence.subscription.update(Max({Subscription.watermark: occurrence.latest}))
+        if run.status != "succeeded":
+            return run
+        if await extend_lease(lease) is None:
+            logger.warning("lease lost during run, leaving watermarks for re-fire: workflow={}", workflow_id)
+            return run
+        for occurrence in occurrences:
+            # Query-level update: a document-level update crashes if the agent
+            # unsubscribed mid-run; this no-ops when the subscription is gone.
+            await Subscription.find_one(Subscription.id == occurrence.subscription.id).update(
+                Max({Subscription.watermark: occurrence.latest})
+            )
         return run
 
-    async def poll_subscriptions(self, *, now: datetime) -> list[Run]:
-        workflows = await self.latest_active_workflows()
-        for workflow in workflows:
-            await self.materialize_subscriptions(workflow, now=now)
-        watched: dict[WorkflowId, list[Subscription]] = {}
-        for subscription in await Subscription.find(
-            In(Subscription.workflow_id, [workflow.workflow_id for workflow in workflows])
-        ).to_list():
-            watched.setdefault(subscription.workflow_id, []).append(subscription)
-        runs: list[Run] = []
-        for workflow_id, subscriptions in watched.items():
-            observed = [o for subscription in subscriptions if (o := await self.observe(subscription))]
-            if occurrences := settle(observed, now=now):
-                runs.append(await self.fire_occurrences(workflow_id, occurrences))
-        return runs
+    async def poll_workflow(self, workflow: Workflow, *, now: datetime, lease: WorkflowLease) -> list[Run]:
+        observed = [
+            o
+            for subscription in await Subscription.find(Subscription.workflow_id == workflow.workflow_id).to_list()
+            if (o := await self.observe(subscription))
+        ]
+        if not (occurrences := settle(observed, now=now)):
+            return []
+        return [await self.fire_occurrences(workflow.workflow_id, occurrences, lease=lease)]
 
     def build_toolsets(self, run: Run) -> tuple[ToolSet, ...]:
         async def record(action: Action) -> None:

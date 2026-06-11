@@ -37,12 +37,22 @@ it at a database, then drive it:
 ```bash
 uvx dly db init             # connect to MongoDB and create indexes
 uvx dly run <workflow-id>   # fire a single manual run of a workflow now
-uvx dly tick                # sweep cron-due workflows and fire each due trigger
+uvx dly tick                # sweep cron-due workflows and poll subscriptions; safe to overlap
 uvx dly tui                 # browse tasks → workflows → runs and current state
 ```
 
-`dly tick` is meant to be driven by a single, non-overlapping scheduler entry
-(system cron or launchd).
+`dly tick` is meant to be driven by a scheduler entry (system cron or launchd) on
+a ~1-minute cadence. Overlapping ticks are safe — even across machines sharing one
+MongoDB — because each workflow is processed under a short database lease: a
+concurrent tick skips in-flight workflows and processes the rest.
+
+Delivery is at-least-once. A duplicate run happens only when a lease holder dies
+or stalls past the lease TTL (~3 minutes — a crash or a long laptop sleep
+mid-run), and the re-fired batch may carry a different set of occurrences than
+the original if more events arrived in between. Workflow state (SQLite databases,
+connections, browser profiles) is host-local, so while tick *dispatch* is
+multi-host-safe, a workflow's memory does not follow it across machines — keep
+all scheduler entries on one host until remote state storage lands.
 
 ## Configuration
 

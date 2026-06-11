@@ -1,5 +1,7 @@
 # dailies
 
+![dailies banner](https://github.com/yasyf/dailies/raw/main/docs/assets/readme-banner.png)
+
 [![PyPI](https://img.shields.io/pypi/v/dly.svg)](https://pypi.org/project/dly/)
 [![Python](https://img.shields.io/pypi/pyversions/dly.svg)](https://pypi.org/project/dly/)
 [![License: PolyForm-NC-1.0.0](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-blue.svg)](https://github.com/yasyf/dailies/blob/main/LICENSE)

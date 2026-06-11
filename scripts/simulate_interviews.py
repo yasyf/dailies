@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from dailies.agent import AgentProvider, AgentRequest, AgentResult, ClaudeAgentSDKProvider
 from dailies.db import lifespan
 from dailies.documents import Task
+from dailies.interface.rendering import render_trigger
 from dailies.interview import (
     InterviewError,
     InterviewRunner,
@@ -30,14 +31,10 @@ from dailies.interview import (
     render_interview,
 )
 from dailies.models import (
-    CronTrigger,
-    EventTrigger,
     Exchange,
     Interview,
     InterviewTurn,
-    ManualTrigger,
     TaskProposal,
-    Trigger,
     WorkflowDraft,
 )
 
@@ -119,18 +116,8 @@ async def simulate(runner: InterviewRunner, provider: AgentProvider, scenario: s
     return Success(scenario, interview, proposal, task)
 
 
-def render_trigger(trigger: Trigger) -> str:
-    match trigger:
-        case CronTrigger(cron_expression=expr, timezone=tz):
-            return f"cron `{expr}` ({tz})"
-        case EventTrigger(source=source, event=event, key=key):
-            return f"event `{source} {event}/{key}`"
-        case ManualTrigger():
-            return "manual"
-
-
 def render_workflow(draft: WorkflowDraft) -> str:
-    triggers = ", ".join(render_trigger(t) for t in draft_triggers(draft))
+    triggers = ", ".join(f"`{render_trigger(t)}`" for t in draft_triggers(draft))
     rules = "\n".join(f"    - {rule}" for rule in draft.rules) or "    - _(none)_"
     return "\n".join(
         [

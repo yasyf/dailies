@@ -53,7 +53,8 @@ def resource(payload: dict[str, Any], *, id: str = "m1", internal_date: str = "1
 
 
 def full(id: str, body: str, *, internal_date: str = "1767225600000") -> dict[str, Any]:
-    return resource({"mimeType": "text/plain", "headers": HEADERS, "body": {"data": b64(body)}}, id=id, internal_date=internal_date)
+    payload = {"mimeType": "text/plain", "headers": HEADERS, "body": {"data": b64(body)}}
+    return resource(payload, id=id, internal_date=internal_date)
 
 
 def minimal(id: str, internal_date: str, *, thread_id: str = "t1") -> dict[str, Any]:
@@ -165,7 +166,8 @@ def test_headers_are_case_insensitive() -> None:
 
 
 def test_truncate_caps_body_and_flips_flag() -> None:
-    long = parse_message(resource({"mimeType": "text/plain", "headers": HEADERS, "body": {"data": b64("x" * (MAX_BODY + 1))}}))
+    payload = {"mimeType": "text/plain", "headers": HEADERS, "body": {"data": b64("x" * (MAX_BODY + 1))}}
+    long = parse_message(resource(payload))
     cut = truncate(long)
     assert (len(cut.body), cut.truncated) == (MAX_BODY, True)
     assert cut.body == "x" * MAX_BODY
@@ -312,7 +314,8 @@ async def test_thread_fetches_full_messages() -> None:
 
 async def test_thread_metas_uses_minimal_format() -> None:
     client, requests = proxied({"/threads/t1": {"id": "t1", "messages": [minimal("m1", "1767225600000")]}})
-    assert await client.thread_metas("t1") == [MessageMeta(id="m1", thread_id="t1", date=datetime(2026, 1, 1, tzinfo=UTC))]
+    metas = await client.thread_metas("t1")
+    assert metas == [MessageMeta(id="m1", thread_id="t1", date=datetime(2026, 1, 1, tzinfo=UTC))]
     assert requests[0].url.params["format"] == "minimal"
 
 

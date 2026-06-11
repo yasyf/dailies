@@ -90,7 +90,9 @@ async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> 
     ],
 )
 def test_draft_triggers(trigger: DraftTrigger) -> None:
-    draft = WorkflowDraft(name="w", summary="s", prompt="p", rules=[], ddl="CREATE TABLE t (x TEXT)", triggers=[trigger])
+    draft = WorkflowDraft(
+        name="w", summary="s", prompt="p", rules=[], ddl="CREATE TABLE t (x TEXT)", triggers=[trigger]
+    )
     assert draft_triggers(draft, ids={}) == [trigger]
 
 

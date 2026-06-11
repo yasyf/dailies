@@ -55,6 +55,7 @@ auto-loading — a missing required variable fails loudly):
 | `MONGODB_DB` | `dailies` | Database name |
 | `DAILIES_STATE_DIR` | `scratch/state` | Directory holding the per-workflow and per-task SQLite state databases |
 | `ANTHROPIC_API_KEY` | `sk-ant-…` | Anthropic API key — required to run workflows and the onboarding interview (`dly run`, `dly tick`, `dly interview`, `dly tui`) |
+| `EXA_API_KEY` | `exa-…` | [Exa](https://exa.ai) API key — backs the agent's `search_web` tool; the tool fails per call without it |
 
 A gitignored `.env` ships with localhost defaults. Load it into your shell before
 running:
@@ -77,6 +78,26 @@ the Claude Agent SDK. The Claude Code CLI it relies on ships bundled with
 `claude-agent-sdk` — no separate install — but it runs as a Node.js subprocess, so a
 Node.js runtime and a valid `ANTHROPIC_API_KEY` must be present at run time. Importing
 the package needs neither.
+
+### Browser tools
+
+Workflow agents get web access in three tiers:
+
+- **Claude-in-Chrome.** When Claude Code's Claude-in-Chrome native host is
+  installed, workflow agents launch with `--chrome` and drive your real,
+  logged-in Chrome through the native browser tools. Set it up once
+  interactively — run `/chrome` inside `claude` with the
+  [Claude in Chrome](https://code.claude.com/docs/en/chrome) extension
+  installed — and have Chrome running when workflows fire. (The Claude desktop
+  app registers a separate native host that the CLI cannot use.)
+- **`browse` (browser-use).** Without Chrome, agents instead get a `browse(task)`
+  tool that runs an autonomous [browser-use](https://browser-use.com) agent in a
+  headless ephemeral browser. Provision its Chromium once with
+  `uvx browser-use install`.
+- **`search_web` / `fetch_url` / `scrape` (always on).** Quick Exa search, a plain
+  HTTP fetch, and a single-page [Stagehand](https://stagehand.dev) extraction in a
+  fresh anonymous headless browser. `scrape` uses your installed Chrome
+  (override the binary with `CHROME_PATH`).
 
 ## What problems does this solve?
 

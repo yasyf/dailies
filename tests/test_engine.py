@@ -10,7 +10,7 @@ from pymongo.errors import DuplicateKeyError
 
 from dailies.agent import AgentResult
 from dailies.documents import Run, Workflow
-from dailies.engine import LOOKBACK, SYSTEM, Engine, TriggerFired, workflow_cursor
+from dailies.engine import LOOKBACK, Engine, TriggerFired, system_prompt, workflow_cursor
 from dailies.models import (
     Action,
     CronExpr,
@@ -171,16 +171,36 @@ async def test_invoke_agent_delegates(mongo: AsyncMongoClient[dict[str, Any]]) -
     )
     await run.insert()
     provider = FakeProvider(AgentResult("done", ok=True))
-    engine = Engine(provider=provider)
+    engine = Engine(provider=provider, chrome=False)
     await engine.invoke_agent(run)
     reloaded = await Run.get(run.uid)
     assert reloaded is not None
     assert reloaded.status == "succeeded"
     assert [block.text for update in reloaded.status_updates for block in update.blocks] == ["done"]
     request = provider.requests[0]
-    assert request.system == SYSTEM
+    assert request.system == system_prompt(chrome=False)
     assert request.prompt == workflow.definition.prompt
+    assert request.chrome is False
+    assert "browse" in {spec.name for spec in request.tools}
     assert len(request.tools) == sum(len(ts.get_tools()) for ts in engine.build_toolsets(run))
+
+
+async def test_invoke_agent_chrome_drops_browse(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    workflow = make_workflow()
+    await workflow.insert()
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        fired_by=[Firing(trigger=ManualTrigger())],
+    )
+    await run.insert()
+    provider = FakeProvider(AgentResult("done", ok=True))
+    await Engine(provider=provider, chrome=True).invoke_agent(run)
+    request = provider.requests[0]
+    assert request.chrome is True
+    assert request.system == system_prompt(chrome=True)
+    assert "browse" not in {spec.name for spec in request.tools}
 
 
 async def test_invoke_agent_marks_failure(mongo: AsyncMongoClient[dict[str, Any]]) -> None:

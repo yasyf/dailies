@@ -12,7 +12,8 @@ from dailies.storage import state_storage
 from dailies.tools import build_toolsets
 from dailies.tools.action import Notification
 from dailies.tools.base import StructuredSink, ToolSet, ToolSpec, tool
-from tests.fakes import FakeGmail
+from dailies.web import SearchResult
+from tests.fakes import FakeBrowser, FakeGmail, FakeWeb
 
 pytestmark = pytest.mark.unit
 
@@ -23,11 +24,26 @@ def context() -> RunContext:
     )
 
 
-def toolsets(gmail: FakeGmail, recorded: list[Action]) -> tuple[ToolSet, ...]:
+def toolsets(
+    gmail: FakeGmail,
+    recorded: list[Action],
+    *,
+    web: FakeWeb | None = None,
+    browser: FakeBrowser | None = None,
+    chrome: bool = False,
+) -> tuple[ToolSet, ...]:
     async def record(action: Action) -> None:
         recorded.append(action)
 
-    return build_toolsets(context(), storage=state_storage(), gmail=gmail, record=record)
+    return build_toolsets(
+        context(),
+        storage=state_storage(),
+        gmail=gmail,
+        web=web or FakeWeb(),
+        browser=browser or FakeBrowser(),
+        chrome=chrome,
+        record=record,
+    )
 
 
 def spec_named(sets: tuple[ToolSet, ...], name: str) -> ToolSpec:
@@ -148,8 +164,6 @@ VALID_ARGS: dict[str, dict] = {
     "notify": {"notification": {"channel": "c", "title": "t", "body": "b"}},
     "record_action": {"kind": "k", "payload": {}},
     "list_actions": {},
-    "fetch_url": {"url": "u"},
-    "search_web": {"query": "q"},
 }
 
 
@@ -197,3 +211,33 @@ async def test_get_message_returns_full_body() -> None:
     message = await spec_named(toolsets(gmail, []), "get_message").invoke({"message_id": "m1"})
     assert message.truncated is False
     assert message.body == "x" * (MAX_BODY + 1)
+
+
+def tool_names(sets: tuple[ToolSet, ...]) -> set[str]:
+    return {t.name for ts in sets for t in ts.get_tools()}
+
+
+def test_chrome_excludes_browse_toolset() -> None:
+    assert "browse" not in tool_names(toolsets(FakeGmail(), [], chrome=True))
+    assert "browse" in tool_names(toolsets(FakeGmail(), [], chrome=False))
+    assert {"fetch_url", "search_web", "scrape"} <= tool_names(toolsets(FakeGmail(), [], chrome=True))
+
+
+async def test_web_tools_delegate_to_clients() -> None:
+    web = FakeWeb(pages={"https://example.com": "body"}, results=[SearchResult(title="t", url="u", snippet="s")])
+    browser = FakeBrowser(result="browsed")
+    sets = toolsets(FakeGmail(), [], web=web, browser=browser)
+    assert await spec_named(sets, "fetch_url").invoke({"url": "https://example.com"}) == "body"
+    assert await spec_named(sets, "search_web").invoke({"query": "q"}) == web.results
+    scraped = await spec_named(sets, "scrape").invoke({"url": "https://example.com", "instruction": "the title"})
+    assert scraped == "scraped https://example.com"
+    assert web.scraped == [("https://example.com", "the title")]
+    assert await spec_named(sets, "browse").invoke({"task": "book it"}) == "browsed"
+    assert browser.tasks == ["book it"]
+
+
+def test_web_tool_schemas_require_args() -> None:
+    sets = toolsets(FakeGmail(), [])
+    assert spec_named(sets, "scrape").input_schema["required"] == ["url", "instruction"]
+    assert spec_named(sets, "browse").input_schema["required"] == ["task"]
+    assert spec_named(sets, "search_web").input_schema["required"] == ["query"]

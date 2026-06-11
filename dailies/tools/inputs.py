@@ -9,9 +9,11 @@ from dailies.gmail import EmailMessage, truncate
 from dailies.models import FrozenModel, WorkflowId, utcnow
 from dailies.runtime import RunContext
 from dailies.tools.base import ToolSet, tool
+from dailies.web import SearchResult
 
 if TYPE_CHECKING:
     from dailies.gmail import GmailClient, MessageMeta
+    from dailies.web import BrowserClient, WebClient
 
 
 class SubscriptionNotFound(LookupError):
@@ -157,15 +159,32 @@ class EmailToolSet(ToolSet):
 
 
 @dataclass(frozen=True, slots=True)
-class BrowserToolSet(ToolSet):
+class WebToolSet(ToolSet):
     context: RunContext
+    web: WebClient
 
     @tool
     async def fetch_url(self, url: str) -> str:
-        """Fetch a URL and return its text content."""
-        raise NotImplementedError
+        """Fetch a URL and return its text content, HTML rendered as markdown."""
+        return await self.web.fetch(url)
 
     @tool
-    async def search_web(self, query: str) -> str:
-        """Search the web and return a summary of results."""
-        raise NotImplementedError
+    async def search_web(self, query: str) -> list[SearchResult]:
+        """Search the web; returns result links with text snippets."""
+        return await self.web.search(query)
+
+    @tool
+    async def scrape(self, url: str, instruction: str) -> str:
+        """Load a page in a fresh headless browser and extract what the instruction asks for."""
+        return await self.web.scrape(url, instruction)
+
+
+@dataclass(frozen=True, slots=True)
+class BrowseToolSet(ToolSet):
+    context: RunContext
+    browser: BrowserClient
+
+    @tool
+    async def browse(self, task: str) -> str:
+        """Drive a real browser through a multi-step web task and return the outcome."""
+        return await self.browser.browse(task)

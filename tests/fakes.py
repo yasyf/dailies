@@ -39,6 +39,7 @@ from dailies.models import (
     utcnow,
 )
 from dailies.state import StateDump
+from dailies.web import SEARCH_RESULTS, SearchResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +241,35 @@ class FakeGmail:
 
     async def profile(self) -> GmailProfile:
         return GmailProfile(email=self.address)
+
+
+@dataclass(frozen=True, slots=True)
+class FakeWeb:
+    """In-memory WebClient: serves ``pages`` by url, returns canned ``results``, records scrapes."""
+
+    pages: dict[str, str] = field(default_factory=dict)
+    results: list[SearchResult] = field(default_factory=list)
+    scraped: list[tuple[str, str]] = field(default_factory=list)
+
+    async def search(self, query: str, *, limit: int = SEARCH_RESULTS) -> list[SearchResult]:
+        return self.results[:limit]
+
+    async def fetch(self, url: str) -> str:
+        return self.pages[url]
+
+    async def scrape(self, url: str, instruction: str) -> str:
+        self.scraped.append((url, instruction))
+        return f"scraped {url}"
+
+
+@dataclass(frozen=True, slots=True)
+class FakeBrowser:
+    tasks: list[str] = field(default_factory=list)
+    result: str = "done"
+
+    async def browse(self, task: str) -> str:
+        self.tasks.append(task)
+        return self.result
 
 
 @dataclass(frozen=True, slots=True)

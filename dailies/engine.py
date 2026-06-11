@@ -27,6 +27,7 @@ from dailies.runtime import RunContext
 from dailies.storage import StateStorage, state_storage
 from dailies.tools import ToolSet
 from dailies.tools.inputs import insert_subscription, news_since
+from dailies.web import BrowserClient, WebClient, browser_client, chrome_available, web_client
 
 # First-sweep lookback: a long-idle workflow fires at most one slot within this window
 # (fire-at-most-once-per-sweep, no catch-up). Tune to match the dly tick cadence.
@@ -40,8 +41,16 @@ SYSTEM = (
     "shared across the task's workflows as shared.<table>; inspect the schema with describe_state "
     "before querying. "
     "check_subscriptions reports new messages on watched email threads and queries; check it whenever "
-    "a run may have been fired by email activity."
+    "a run may have been fired by email activity. "
+    "On the web, search_web finds pages, fetch_url reads one, and scrape extracts targeted content "
+    "from a single page. "
 )
+CHROME_HINT = "For interactive multi-step web tasks, use the Claude-in-Chrome browser tools."
+BROWSE_HINT = "For interactive multi-step web tasks, call the browse tool with the goal stated as one task."
+
+
+def system_prompt(*, chrome: bool) -> str:
+    return f"{SYSTEM}{CHROME_HINT if chrome else BROWSE_HINT}"
 
 
 class WorkflowNotFound(LookupError):
@@ -117,6 +126,9 @@ class Engine:
     provider: AgentProvider = field(default_factory=ClaudeAgentSDKProvider)
     storage: StateStorage = field(default_factory=state_storage)
     gmail: GmailClient = field(default_factory=gmail_client)
+    web: WebClient = field(default_factory=web_client)
+    browser: BrowserClient = field(default_factory=browser_client)
+    chrome: bool = field(default_factory=chrome_available)
 
     async def active_workflow(self, workflow_id: WorkflowId) -> Workflow:
         workflow = (
@@ -250,6 +262,9 @@ class Engine:
             ),
             storage=self.storage,
             gmail=self.gmail,
+            web=self.web,
+            browser=self.browser,
+            chrome=self.chrome,
             record=record,
         )
 
@@ -259,7 +274,14 @@ class Engine:
             raise WorkflowNotFound(run.workflow_doc_id)
         specs = tuple(t.to_spec() for ts in self.build_toolsets(run) for t in ts.get_tools())
         await self.set_status(run, "running")
-        result = await self.provider.run(AgentRequest(system=SYSTEM, prompt=workflow.definition.prompt, tools=specs))
+        result = await self.provider.run(
+            AgentRequest(
+                system=system_prompt(chrome=self.chrome),
+                prompt=workflow.definition.prompt,
+                tools=specs,
+                chrome=self.chrome,
+            )
+        )
         await self.record_status(run, StatusUpdate(title="result", blocks=[TextBlock(text=result.text)]))
         await self.set_status(run, "succeeded" if result.ok else "failed")
 

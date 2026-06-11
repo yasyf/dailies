@@ -17,6 +17,7 @@ class AgentRequest:
     system: str
     prompt: str
     tools: tuple[ToolSpec, ...] = ()
+    chrome: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +61,9 @@ def adapt(spec: ToolSpec) -> SdkMcpTool[Any]:
 class ClaudeAgentSDKProvider:
     """`AgentProvider` backed by the Claude Agent SDK.
 
-    Exposes the run's `ToolSpec`s as a single in-process MCP server and restricts the
-    agent to those tools alone (no built-ins, no filesystem settings).
+    Exposes the run's `ToolSpec`s as a single in-process MCP server with no built-ins
+    and no filesystem settings; `request.chrome` additionally launches the agent with
+    `--chrome`, adding the native Claude-in-Chrome browser tools.
     """
 
     model: str = "claude-opus-4-8"
@@ -86,11 +88,13 @@ class ClaudeAgentSDKProvider:
             system_prompt=request.system,
             model=self.model,
             mcp_servers={self.server: mcp_server},
-            allowed_tools=[f"mcp__{self.server}__{s.name}" for s in request.tools],
+            allowed_tools=[f"mcp__{self.server}__{s.name}" for s in request.tools]
+            + (["mcp__claude-in-chrome"] if request.chrome else []),
             setting_sources=[],
             permission_mode="bypassPermissions",
             max_turns=self.max_turns,
             tools=[],
+            extra_args={"chrome": None} if request.chrome else {},
         )
         parts: list[str] = []
         ok = False

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
-from dailies.agent import AgentProvider, AgentResult, ClaudeAgentSDKProvider, adapt
+from dailies.agent import AgentProvider, AgentRequest, AgentResult, ClaudeAgentSDKProvider, adapt
 from dailies.models import TaskId, WorkflowId
 from dailies.runtime import RunContext
 from dailies.tools.base import ToolSet, ToolSpec, tool
@@ -80,3 +81,24 @@ def test_fake_provider_satisfies_protocol() -> None:
 def test_provider_default_model() -> None:
     assert ClaudeAgentSDKProvider().model == "claude-opus-4-8"
     assert ClaudeAgentSDKProvider(model="claude-sonnet-4-6").model == "claude-sonnet-4-6"
+
+
+def test_request_chrome_defaults_false() -> None:
+    assert AgentRequest(system="s", prompt="p").chrome is False
+
+
+@pytest.mark.parametrize(("chrome", "expected"), [(True, {"chrome": None}), (False, {})], ids=["chrome", "no-chrome"])
+async def test_run_passes_chrome_extra_args(
+    monkeypatch: pytest.MonkeyPatch, chrome: bool, expected: dict[str, Any]
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_query(*, prompt: str, options: Any) -> AsyncIterator[Any]:
+        captured["options"] = options
+        return
+        yield
+
+    monkeypatch.setattr("claude_agent_sdk.query", fake_query)
+    result = await ClaudeAgentSDKProvider().run(AgentRequest(system="s", prompt="p", chrome=chrome))
+    assert captured["options"].extra_args == expected
+    assert result == AgentResult(text="", ok=False)

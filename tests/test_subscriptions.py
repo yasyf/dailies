@@ -49,7 +49,7 @@ def make_workflow(
         workflow_id=workflow_id or WorkflowId(uuid4()),
         version=version,
         name="wf",
-        definition=WorkflowDefinition(prompt=PromptStr("p")),
+        definition=WorkflowDefinition(summary="s", prompt=PromptStr("p")),
         ddl=SchemaStr("CREATE TABLE t (id TEXT)"),
         status=status,
         triggers=triggers or [],

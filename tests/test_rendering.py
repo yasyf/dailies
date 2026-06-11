@@ -13,6 +13,7 @@ from dailies.interface.rendering import (
     render_firing,
     render_trigger,
     run_status_text,
+    state_table,
 )
 from dailies.models import (
     CronExpr,
@@ -175,13 +176,16 @@ def test_workflow_card_from_workflow() -> None:
         name="digest-workflow",
         version=2,
         workflow_id=WorkflowId(uuid4()),
-        definition=WorkflowDefinition(prompt=PromptStr("send the digest"), rules=["be brief"]),
+        definition=WorkflowDefinition(
+            summary="Sends the digest each morning", prompt=PromptStr("send the digest"), rules=["be brief"]
+        ),
         ddl=SchemaStr("CREATE TABLE sent (day TEXT)"),
         status="active",
         triggers=[trigger],
     )
     assert WorkflowCard.from_workflow(workflow) == WorkflowCard(
         name="digest-workflow",
+        summary="Sends the digest each morning",
         prompt="send the digest",
         rules=("be brief",),
         ddl="CREATE TABLE sent (day TEXT)",
@@ -194,6 +198,7 @@ def test_workflow_card_from_workflow() -> None:
 def test_workflow_card_from_draft() -> None:
     draft = WorkflowDraft(
         name="digest-workflow",
+        summary="Sends the digest each morning",
         prompt="send the digest",
         rules=["be brief", "no emoji"],
         ddl="CREATE TABLE sent (day TEXT)",
@@ -201,6 +206,7 @@ def test_workflow_card_from_draft() -> None:
     )
     assert WorkflowCard.from_draft(draft) == WorkflowCard(
         name="digest-workflow",
+        summary="Sends the digest each morning",
         prompt="send the digest",
         rules=("be brief", "no emoji"),
         ddl="CREATE TABLE sent (day TEXT)",
@@ -208,3 +214,21 @@ def test_workflow_card_from_draft() -> None:
         version=None,
         status=None,
     )
+
+
+@pytest.mark.parametrize(
+    ("rows", "limit", "expected_rows", "caption"),
+    [
+        pytest.param([{"v": i} for i in range(7)], 5, 5, "… +2 more", id="over-limit-truncated"),
+        pytest.param([{"v": i} for i in range(7)], None, 7, None, id="no-limit-shows-all"),
+        pytest.param([{"v": 1}], 5, 1, None, id="under-limit-no-caption"),
+        pytest.param([], 5, 0, "(no rows)", id="empty-captioned"),
+    ],
+)
+def test_state_table_limits(
+    rows: list[dict[str, int]], limit: int | None, expected_rows: int, caption: str | None
+) -> None:
+    table = state_table("t", rows, limit=limit)
+    assert table.title == "t"
+    assert table.row_count == expected_rows
+    assert table.caption == caption

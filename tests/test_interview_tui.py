@@ -3,7 +3,8 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from textual.widgets import Input
+from rich.table import Table
+from textual.widgets import Input, Static
 
 from dailies.interface import screens
 from dailies.interface.screens import ReviewScreen
@@ -21,6 +22,7 @@ PROPOSAL = {
         "workflows": [
             {
                 "name": "send",
+                "summary": "Sends the digest",
                 "prompt": "p",
                 "rules": [],
                 "ddl": "CREATE TABLE t (x TEXT)",
@@ -50,6 +52,9 @@ async def test_interview_to_review_and_approve(monkeypatch: pytest.MonkeyPatch) 
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, ReviewScreen)
+        state_box = app.screen.query_one(".flow-box.state")
+        assert "🗄 t" in "\n".join(str(widget.render()) for widget in state_box.query(Static))
+        assert not any(isinstance(widget.content, Table) for widget in state_box.query(Static))
 
         await pilot.press("a")
         await pilot.pause()

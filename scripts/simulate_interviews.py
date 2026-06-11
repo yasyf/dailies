@@ -123,8 +123,8 @@ def render_trigger(trigger: Trigger) -> str:
     match trigger:
         case CronTrigger(cron_expression=expr, timezone=tz):
             return f"cron `{expr}` ({tz})"
-        case EventTrigger(event_type=event_type, event_key=event_key):
-            return f"event `{event_type}/{event_key}`"
+        case EventTrigger(source=source, event=event, key=key):
+            return f"event `{source} {event}/{key}`"
         case ManualTrigger():
             return "manual"
 
@@ -135,6 +135,7 @@ def render_workflow(draft: WorkflowDraft) -> str:
     return "\n".join(
         [
             f"- **{draft.name}**",
+            f"  - summary: {draft.summary}",
             f"  - prompt: {draft.prompt}",
             "  - rules:",
             rules,

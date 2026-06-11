@@ -122,7 +122,9 @@ class FakePresenter:
             name="digest-workflow",
             version=1,
             workflow_id=self.workflow_id,
-            definition=WorkflowDefinition(prompt=PromptStr("send the digest"), rules=["be brief"]),
+            definition=WorkflowDefinition(
+                summary="Sends the digest each morning", prompt=PromptStr("send the digest"), rules=["be brief"]
+            ),
             ddl=SchemaStr("CREATE TABLE sent (day TEXT)"),
             status="active",
             triggers=[CronTrigger(cron_expression=CronExpr("0 9 * * *"))],

@@ -112,6 +112,7 @@ class TaskDefinition(FrozenModel):
 
 
 class WorkflowDefinition(FrozenModel):
+    summary: str
     prompt: PromptStr
     rules: list[str] = Field(default_factory=list)
 
@@ -141,6 +142,7 @@ class TaskDraft(FrozenModel):
 
 class WorkflowDraft(FrozenModel):
     name: str
+    summary: str
     prompt: str
     rules: list[str] = Field(default_factory=list)
     ddl: str

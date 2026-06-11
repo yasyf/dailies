@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from dailies.models import WorkflowDraft
     from dailies.state import StateDump
 
+ROW_PREVIEW = 5
 CREATE_TABLE = re.compile(
     r"""CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?(?P<table>[\w.]+)["'`\]]?\s*\((?P<body>.*)\)""",
     re.IGNORECASE | re.DOTALL,
@@ -89,6 +90,7 @@ class WorkflowCard:
     """Render-ready view of a workflow, built from a persisted document or an interview draft."""
 
     name: str
+    summary: str
     prompt: str
     rules: tuple[str, ...]
     ddl: str
@@ -100,6 +102,7 @@ class WorkflowCard:
     def from_workflow(cls, workflow: Workflow) -> WorkflowCard:
         return cls(
             name=workflow.name,
+            summary=workflow.definition.summary,
             prompt=workflow.definition.prompt,
             rules=tuple(workflow.definition.rules),
             ddl=workflow.ddl,
@@ -112,6 +115,7 @@ class WorkflowCard:
     def from_draft(cls, draft: WorkflowDraft) -> WorkflowCard:
         return cls(
             name=draft.name,
+            summary=draft.summary,
             prompt=draft.prompt,
             rules=tuple(draft.rules),
             ddl=draft.ddl,
@@ -168,6 +172,10 @@ def ddl_block(ddl: str) -> Collapsible:
     return Collapsible(Static(ddl_syntax(ddl), classes="ddl"), title="DDL", collapsed=True)
 
 
+def prompt_block(prompt: str) -> Collapsible:
+    return Collapsible(Static(prompt, classes="prompt", markup=False), title="prompt", collapsed=True)
+
+
 def rules_list(rules: Sequence[str]) -> Static:
     return Static("\n".join(f"• {rule}" for rule in rules) or "—", markup=False)
 
@@ -201,37 +209,47 @@ def trigger_box(trigger: Trigger) -> Vertical:
 def workflow_box(card: WorkflowCard) -> Vertical:
     return flow_box(
         *(() if card.status is None else (status_badge(card.status),)),
-        Static(excerpt(card.prompt), classes="prompt", markup=False),
+        Static(card.summary, classes="summary", markup=False),
         rules_list(card.rules),
+        prompt_block(card.prompt),
         title=card.name if card.version is None else f"{card.name} v{card.version}",
         classes="flow-box workflow" if card.status is None else f"flow-box workflow {card.status}",
     )
 
 
-def state_box(ddl: str) -> Vertical:
+def schema_widgets(ddl: str) -> list[Widget]:
     match parse_ddl(ddl):
         case ():
-            return flow_box(Static(ddl_syntax(ddl), classes="ddl"), title="state", classes="flow-box state")
+            return [Static(ddl_syntax(ddl), classes="ddl")]
         case summaries:
-            return flow_box(
-                *(
-                    widget
-                    for summary in summaries
-                    for widget in (
-                        Static(f"🗄 {summary.table}", classes="table-name", markup=False),
-                        *(
-                            Static(f"{column.name} {column.type}", classes="column", markup=False)
-                            for column in summary.columns
-                        ),
-                    )
-                ),
-                ddl_block(ddl),
-                title="state",
-                classes="flow-box state",
-            )
+            return [
+                widget
+                for summary in summaries
+                for widget in (
+                    Static(f"🗄 {summary.table}", classes="table-name", markup=False),
+                    Static(
+                        ", ".join(f"{column.name} {column.type}" for column in summary.columns) or "—",
+                        classes="columns",
+                        markup=False,
+                    ),
+                )
+            ]
 
 
-def workflow_flow(card: WorkflowCard) -> Vertical:
+def state_box(ddl: str, state: StateDump | None) -> Vertical:
+    return flow_box(
+        *schema_widgets(ddl),
+        *(
+            ()
+            if state is None
+            else (Static(state_table(name, rows, limit=ROW_PREVIEW)) for name, rows in state.items())
+        ),
+        title="state",
+        classes="flow-box state",
+    )
+
+
+def workflow_flow(card: WorkflowCard, state: StateDump | None = None) -> Vertical:
     return Vertical(
         *(
             (Horizontal(*(trigger_box(trigger) for trigger in card.triggers), classes="flow-triggers"), flow_arrow())
@@ -240,16 +258,18 @@ def workflow_flow(card: WorkflowCard) -> Vertical:
         ),
         workflow_box(card),
         flow_arrow(),
-        state_box(card.ddl),
+        state_box(card.ddl, state),
         flow_arrow(),
         Static("📣 notify user", classes="flow-terminus"),
         classes="flow",
     )
 
 
-def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]]) -> Table:
-    table = Table(*(rows[0] if rows else ()), title=name, caption=None if rows else "(no rows)")
-    for row in rows:
+def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]], *, limit: int | None = None) -> Table:
+    shown = rows if limit is None else rows[:limit]
+    caption = "(no rows)" if not rows else f"… +{len(rows) - len(shown)} more" if len(shown) < len(rows) else None
+    table = Table(*(rows[0] if rows else ()), title=name, caption=caption)
+    for row in shown:
         table.add_row(*(repr(value) for value in row.values()))
     return table
 
@@ -266,7 +286,7 @@ def task_header(task: Task) -> Vertical:
     return Vertical(
         Horizontal(Label(task.name, classes="task-name", markup=False), status_badge(task.status)),
         Static(task.definition.description, markup=False),
-        Static(task.definition.prompt, classes="muted", markup=False),
+        prompt_block(task.definition.prompt),
         *(() if task.shared_ddl is None else (ddl_block(task.shared_ddl),)),
         classes="task-header",
     )

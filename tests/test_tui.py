@@ -51,16 +51,39 @@ async def test_task_detail_shows_full_layout() -> None:
         detail = screen.query_one("#detail")
         assert str(detail.query_one(".task-name", Label).render()) == "Daily digest"
         assert "Send a daily digest" in statics_text(detail.query_one(".task-header"))
-        assert "send the digest" in statics_text(detail.query_one(".flow-box.workflow"))
+        assert "summarize the day" in statics_text(detail.query_one(".task-header"))
+        workflow_text = statics_text(detail.query_one(".flow-box.workflow"))
+        assert "Sends the digest each morning" in workflow_text
+        assert "send the digest" in workflow_text
         assert "cron 0 9 * * *" in statics_text(detail.query_one(".flow-box.trigger"))
         assert [syntax_code(widget) for widget in detail.query(".ddl").results(Static)] == [
             "CREATE TABLE totals (sent INTEGER)",
-            "CREATE TABLE sent (day TEXT)",
         ]
-        state_text = statics_text(detail.query_one(".flow-box.state"))
+        state = detail.query_one(".flow-box.state")
+        state_text = statics_text(state)
         assert "🗄 sent" in state_text
         assert "day TEXT" in state_text
+        tables = [widget.content for widget in state.query(Static) if isinstance(widget.content, Table)]
+        assert [table.title for table in tables] == ["sent"]
+        assert tables[0].row_count == 2
+        assert tables[0].caption is None
         assert detail.query_one(".flow-terminus", Static)
+
+
+async def test_flow_boxes_span_and_triggers_hug() -> None:
+    app = make_app(FakePresenter())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")  # task -> detail
+        await pilot.pause()
+        detail = app.screen.query_one("#detail")
+        flow = detail.query_one(".flow")
+        assert detail.query_one(".flow-box.workflow").region.width == flow.region.width
+        assert detail.query_one(".flow-box.state").region.width == flow.region.width
+        trigger = detail.query_one(".flow-box.trigger")
+        assert 0 < trigger.region.width < flow.region.width
+        assert trigger.query_one(Static).region.height == 1
+        assert detail.query_one(".flow-box.workflow .summary", Static).region.height == 1
 
 
 async def test_drilldown_renders_three_panes() -> None:

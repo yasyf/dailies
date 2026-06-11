@@ -122,6 +122,10 @@ async def test_shared_database_visible_across_sibling_workflows() -> None:
         assert [tuple(r) for r in await db.execute_fetchall("SELECT n FROM shared.counter")] == [(1,)]
 
 
+async def test_dump_state_missing_database_returns_empty() -> None:
+    assert await dump_state(state_storage(), workflow_db_key(WorkflowId(uuid4()))) == {}
+
+
 async def test_dump_state_caps_rows() -> None:
     storage = state_storage()
     context = make_context()

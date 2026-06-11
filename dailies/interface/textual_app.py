@@ -215,10 +215,11 @@ class TaskDetailScreen(DrillScreen):
     async def on_mount(self) -> None:
         task = await self.presenter.get_task(self.task_id)
         workflows = await self.presenter.list_workflows(self.task_id)
-        await self.query_one("#detail", VerticalScroll).mount(
-            task_header(task),
-            *(workflow_flow(WorkflowCard.from_workflow(workflow)) for workflow in workflows),
-        )
+        flows = [
+            workflow_flow(WorkflowCard.from_workflow(workflow), await self.presenter.get_state(workflow.workflow_id))
+            for workflow in workflows
+        ]
+        await self.query_one("#detail", VerticalScroll).mount(task_header(task), *flows)
         self.sub_title = task.name
 
     def action_workflows(self) -> None:

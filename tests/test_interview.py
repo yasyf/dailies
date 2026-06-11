@@ -41,6 +41,7 @@ PROPOSAL = {
     "workflows": [
         {
             "name": "send",
+            "summary": "Sends the digest each morning",
             "prompt": "send the digest",
             "rules": ["be brief"],
             "ddl": "CREATE TABLE sent (day TEXT)",
@@ -57,6 +58,7 @@ async def test_synthesize_parses_proposal() -> None:
     assert result.task.user_input == "email me a digest"
     assert result.task.shared_ddl == "CREATE TABLE totals (sent INTEGER)"
     assert [w.name for w in result.workflows] == ["send"]
+    assert result.workflows[0].summary == "Sends the digest each morning"
     assert result.workflows[0].rules == ["be brief"]
     assert result.workflows[0].triggers == [
         CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="America/New_York")
@@ -84,5 +86,5 @@ async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> 
     ],
 )
 def test_draft_triggers(trigger: Trigger) -> None:
-    draft = WorkflowDraft(name="w", prompt="p", rules=[], ddl="CREATE TABLE t (x TEXT)", triggers=[trigger])
+    draft = WorkflowDraft(name="w", summary="s", prompt="p", rules=[], ddl="CREATE TABLE t (x TEXT)", triggers=[trigger])
     assert draft_triggers(draft) == [trigger]

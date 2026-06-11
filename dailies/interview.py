@@ -46,8 +46,9 @@ SYNTHESIS_SYSTEM = (
     "TaskProposal. The task has a human name, a one-sentence description, user_input set to the user's "
     "verbatim opening scenario, a prompt (a standing instruction the agent follows on every run), and "
     "shared_ddl — a SQLite schema for state shared across its workflows, or null when nothing is shared. "
-    "Provide one or more workflows; each has a name, a per-run prompt, a list of plain-language rules, a "
-    "ddl for the state private to that workflow, and one or more triggers. "
+    "Provide one or more workflows; each has a name, a one-sentence summary (at most ~15 words, shown in "
+    "the UI as the workflow's gloss — describe the outcome, don't restate the prompt), a per-run prompt, a "
+    "list of plain-language rules, a ddl for the state private to that workflow, and one or more triggers. "
     "Every ddl and shared_ddl is executed verbatim against a fresh SQLite database when the task is saved, "
     "so it must be valid SQLite DDL: semicolon-terminated CREATE TABLE (and optional CREATE INDEX) "
     "statements using SQLite types (TEXT, INTEGER, REAL). At run time the workflow addresses its own "
@@ -142,7 +143,7 @@ async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Tas
             workflow_id=WorkflowId(new_uuid()),
             version=1,
             name=draft.name,
-            definition=WorkflowDefinition(prompt=PromptStr(draft.prompt), rules=draft.rules),
+            definition=WorkflowDefinition(summary=draft.summary, prompt=PromptStr(draft.prompt), rules=draft.rules),
             ddl=SchemaStr(draft.ddl),
             status=status,
             triggers=draft_triggers(draft),

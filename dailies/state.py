@@ -79,6 +79,8 @@ async def state_session(
 
 async def dump_state(storage: StateStorage, key: str) -> StateDump:
     async with storage.lease(key) as path:
+        if not path.exists():
+            return {}
         async with aiosqlite.connect(f"file:{path}?mode=rw", uri=True) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA query_only = ON")

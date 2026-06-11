@@ -27,6 +27,7 @@ def make_proposal(*, ddl: str = "CREATE TABLE sent (day TEXT)") -> TaskProposal:
         workflows=[
             WorkflowDraft(
                 name="send",
+                summary="Sends the digest each morning",
                 prompt="send the digest",
                 rules=["be brief"],
                 ddl=ddl,
@@ -59,6 +60,7 @@ async def test_persist_proposal_active(mongo: AsyncMongoClient[dict[str, Any]]) 
     workflow = workflows[0]
     assert workflow.status == "active"
     assert workflow.version == 1
+    assert workflow.definition.summary == "Sends the digest each morning"
     assert workflow.definition.rules == ["be brief"]
     assert workflow.ddl == "CREATE TABLE sent (day TEXT)"
     assert workflow.triggers == [CronTrigger(cron_expression=CronExpr("0 9 * * *"))]

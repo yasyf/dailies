@@ -46,7 +46,7 @@ async def make_workflow(task_id: TaskId) -> Workflow:
         workflow_id=WorkflowId(uuid4()),
         version=1,
         name="w",
-        definition=WorkflowDefinition(prompt=PromptStr("p")),
+        definition=WorkflowDefinition(summary="s", prompt=PromptStr("p")),
         ddl=SchemaStr("CREATE TABLE t (id TEXT)"),
     ).insert()
     await apply_ddl(state_storage(), workflow_db_key(workflow.workflow_id), workflow.ddl)

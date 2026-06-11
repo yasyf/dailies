@@ -72,14 +72,18 @@ ListItem Vertical, ListItem Horizontal {
 
 .flow-box {
     height: auto;
-    width: auto;
-    max-width: 100%;
+    width: 100%;
     border: round $primary;
     padding: 0 1;
 }
 
 .flow-box.trigger {
+    width: auto;
     border: round $accent;
+}
+
+.flow-box.trigger Static {
+    width: auto;
 }
 
 .flow-box.state {
@@ -92,6 +96,14 @@ ListItem Vertical, ListItem Horizontal {
 
 .flow-box.inactive {
     border: round $foreground 50%;
+}
+
+.table-name {
+    text-style: bold;
+}
+
+.columns {
+    color: $text-muted;
 }
 
 .flow-arrow {

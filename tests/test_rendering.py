@@ -242,3 +242,13 @@ def test_state_table_empty_renders_visible_text() -> None:
     text = state_table("sent", [])
     assert isinstance(text, Text)
     assert text.plain == "sent (no rows)"
+
+
+def test_state_table_preview_truncates_wide_cells() -> None:
+    rows = [{"body": "x" * 100}]
+    preview = state_table("t", rows, limit=5)
+    assert isinstance(preview, Table)
+    assert preview.columns[0]._cells == [excerpt(repr("x" * 100), limit=40)]
+    full = state_table("t", rows)
+    assert isinstance(full, Table)
+    assert full.columns[0]._cells == [repr("x" * 100)]

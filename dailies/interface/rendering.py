@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from dailies.state import StateDump
 
 ROW_PREVIEW = 5
+CELL_PREVIEW = 40
 CREATE_TABLE = re.compile(
     r"""CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?(?P<table>[\w.]+)["'`\]]?\s*\((?P<body>.*)\)""",
     re.IGNORECASE | re.DOTALL,
@@ -199,10 +200,10 @@ def flow_arrow() -> Static:
     return Static("│\n▼", classes="flow-arrow")
 
 
-def trigger_box(trigger: Trigger) -> Vertical:
+def trigger_box(*triggers: Trigger) -> Vertical:
     return flow_box(
-        Static(f"{TRIGGER_GLYPHS[trigger.kind]} {render_trigger(trigger)}", markup=False),
-        title="trigger",
+        *(Static(f"{TRIGGER_GLYPHS[trigger.kind]} {render_trigger(trigger)}", markup=False) for trigger in triggers),
+        title="trigger" if len(triggers) == 1 else "triggers",
         classes="flow-box trigger",
     )
 
@@ -216,6 +217,20 @@ def workflow_box(card: WorkflowCard) -> Vertical:
         title=card.name if card.version is None else f"{card.name} v{card.version}",
         classes="flow-box workflow" if card.status is None else f"flow-box workflow {card.status}",
     )
+
+
+def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]], *, limit: int | None = None) -> Table | Text:
+    if not rows:
+        return Text(f"{name} (no rows)", style="dim")
+    shown = rows if limit is None else rows[:limit]
+    hidden = len(rows) - len(shown)
+    over_cap = "+" if len(rows) >= MAX_ROWS else ""
+    table = Table(*rows[0], title=name, caption=f"… +{hidden}{over_cap} more" if hidden else None)
+    for row in shown:
+        table.add_row(
+            *(repr(value) if limit is None else excerpt(repr(value), limit=CELL_PREVIEW) for value in row.values())
+        )
+    return table
 
 
 def schema_widgets(ddl: str) -> list[Static]:
@@ -252,11 +267,7 @@ def state_box(ddl: str, state: StateDump | None) -> Vertical:
 
 def workflow_flow(card: WorkflowCard, state: StateDump | None = None) -> Vertical:
     return Vertical(
-        *(
-            (Horizontal(*(trigger_box(trigger) for trigger in card.triggers), classes="flow-triggers"), flow_arrow())
-            if card.triggers
-            else ()
-        ),
+        *((trigger_box(*card.triggers), flow_arrow()) if card.triggers else ()),
         workflow_box(card),
         flow_arrow(),
         state_box(card.ddl, state),
@@ -264,18 +275,6 @@ def workflow_flow(card: WorkflowCard, state: StateDump | None = None) -> Vertica
         Static("📣 notify user", classes="flow-terminus"),
         classes="flow",
     )
-
-
-def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]], *, limit: int | None = None) -> Table | Text:
-    if not rows:
-        return Text(f"{name} (no rows)", style="dim")
-    shown = rows if limit is None else rows[:limit]
-    hidden = len(rows) - len(shown)
-    over_cap = "+" if len(rows) >= MAX_ROWS else ""
-    table = Table(*rows[0], title=name, caption=f"… +{hidden}{over_cap} more" if hidden else None)
-    for row in shown:
-        table.add_row(*(repr(value) for value in row.values()))
-    return table
 
 
 def state_widgets(title: str, ddl: str | None, state: StateDump) -> list[Static]:

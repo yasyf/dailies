@@ -82,8 +82,11 @@ async def test_flow_boxes_span_and_triggers_hug() -> None:
         assert detail.query_one(".flow-box.workflow").region.width == flow.region.width
         assert detail.query_one(".flow-box.state").region.width == flow.region.width
         trigger = detail.query_one(".flow-box.trigger")
-        assert 0 < trigger.region.width < flow.region.width
-        assert trigger.query_one(Static).region.height == 1
+        assert 0 < trigger.region.width <= flow.region.width
+        assert trigger.region.right <= flow.region.right
+        cron_line, event_line = trigger.query(Static).results(Static)
+        assert cron_line.region.height == 1
+        assert event_line.region.right <= flow.region.right
         assert detail.query_one(".flow-box.workflow .summary", Static).region.height == 1
 
 

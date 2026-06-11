@@ -23,6 +23,7 @@ from dailies.models import (
     Action,
     CronExpr,
     CronTrigger,
+    EventTrigger,
     Firing,
     PromptStr,
     RunStatus,
@@ -127,7 +128,14 @@ class FakePresenter:
             ),
             ddl=SchemaStr("CREATE TABLE sent (day TEXT)"),
             status="active",
-            triggers=[CronTrigger(cron_expression=CronExpr("0 9 * * *"))],
+            triggers=[
+                CronTrigger(cron_expression=CronExpr("0 9 * * *")),
+                EventTrigger(
+                    source="gmail",
+                    event="query",
+                    key="from:digest@example.com OR subject:(daily digest OR weekly roundup) newer_than:7d",
+                ),
+            ],
         )
         self.run = FakeRun(
             status="succeeded",

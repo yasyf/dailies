@@ -62,14 +62,6 @@ ListItem Vertical, ListItem Horizontal {
     margin: 1 0;
 }
 
-.flow-triggers {
-    height: auto;
-}
-
-.flow-triggers > .flow-box {
-    margin-right: 2;
-}
-
 .flow-box {
     height: auto;
     width: 100%;

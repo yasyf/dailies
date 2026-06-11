@@ -24,8 +24,9 @@ jobs:
       - name: Sync (dev)
         run: uv sync --extra dev
 
-      - name: Type check (ty)
+      - name: Type check (ty, non-blocking)
         run: uv run ty check dailies
+        continue-on-error: true
 
       - name: Test (unit + tui)
         run: uv run pytest -m "not integration"

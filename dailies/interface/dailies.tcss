@@ -79,11 +79,13 @@ ListItem Vertical, ListItem Horizontal {
 
 .flow-box.trigger {
     width: auto;
+    max-width: 100%;
     border: round $accent;
 }
 
 .flow-box.trigger Static {
     width: auto;
+    max-width: 100%;
 }
 
 .flow-box.state {

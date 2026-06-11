@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import re
 import sqlite3
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,7 @@ from dailies.models import (
     InterviewTurn,
     TaskProposal,
     WorkflowDraft,
+    WorkflowTriggerDraft,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +54,22 @@ ANSWERER_SYSTEM = (
     "tracks state in its own schema, so don't fixate on the literal tool."
 )
 
+type Check = tuple[str, Callable[[TaskProposal], bool]]
+
+SCENARIO2_CHECKS: tuple[Check, ...] = (
+    ("exactly three workflows", lambda p: len(p.workflows) == 3),
+    ("two cron collectors without workflow triggers", lambda p: len(collectors(p)) == 2),
+    ("one decider with only workflow triggers", lambda p: len(deciders(p)) == 1),
+    (
+        "decider fans in over both collectors by name",
+        lambda p: len(d := deciders(p)) == 1 and upstream_names(d[0]) == {w.name for w in collectors(p)},
+    ),
+    ("shared_ddl declared", lambda p: bool(p.task.shared_ddl)),
+    ("decider reads shared state", lambda p: len(d := deciders(p)) == 1 and "shared." in d[0].prompt),
+)
+
+EXPECTATIONS: tuple[tuple[Check, ...], ...] = ((), SCENARIO2_CHECKS, (), (), ())
+
 
 @dataclass(frozen=True, slots=True)
 class ThrottledProvider:
@@ -63,11 +82,18 @@ class ThrottledProvider:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckResult:
+    name: str
+    passed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class Success:
     scenario: str
     interview: Interview
     proposal: TaskProposal
     task: Task
+    checks: tuple[CheckResult, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +103,30 @@ class Failure:
 
 
 type Outcome = Success | Failure
+
+
+def trigger_kinds(draft: WorkflowDraft) -> set[str]:
+    return {trigger.kind for trigger in draft.triggers}
+
+
+def collectors(proposal: TaskProposal) -> list[WorkflowDraft]:
+    return [
+        draft
+        for draft in proposal.workflows
+        if "cron" in (kinds := trigger_kinds(draft)) and "workflow" not in kinds
+    ]
+
+
+def deciders(proposal: TaskProposal) -> list[WorkflowDraft]:
+    return [draft for draft in proposal.workflows if trigger_kinds(draft) == {"workflow"}]
+
+
+def upstream_names(draft: WorkflowDraft) -> set[str]:
+    return {trigger.workflow for trigger in draft.triggers if isinstance(trigger, WorkflowTriggerDraft)}
+
+
+def run_checks(proposal: TaskProposal, checks: tuple[Check, ...]) -> tuple[CheckResult, ...]:
+    return tuple(CheckResult(name, predicate(proposal)) for name, predicate in checks)
 
 
 def load_scenarios() -> list[str]:
@@ -95,7 +145,9 @@ async def simulate_answer(provider: AgentProvider, interview: Interview, questio
     return result.text.strip()
 
 
-async def simulate(runner: InterviewRunner, provider: AgentProvider, scenario: str) -> Outcome:
+async def simulate(
+    runner: InterviewRunner, provider: AgentProvider, scenario: str, checks: tuple[Check, ...]
+) -> Outcome:
     try:
         interview = Interview(scenario=scenario)
         for _ in range(MAX_TURNS):
@@ -112,7 +164,7 @@ async def simulate(runner: InterviewRunner, provider: AgentProvider, scenario: s
         task = await persist_proposal(proposal, status="draft")
     except (InterviewError, ValidationError, sqlite3.Error) as exc:
         return Failure(scenario=scenario, error=str(exc))
-    return Success(scenario, interview, proposal, task)
+    return Success(scenario, interview, proposal, task, run_checks(proposal, checks))
 
 
 def render_workflow(draft: WorkflowDraft) -> str:
@@ -154,8 +206,15 @@ def render_success(n: int, outcome: Success) -> str:
             "",
             f"### Workflows ({len(proposal.workflows)})",
             *(render_workflow(w) for w in proposal.workflows),
+            *render_checks(outcome.checks),
         ]
     )
+
+
+def render_checks(checks: tuple[CheckResult, ...]) -> list[str]:
+    if not checks:
+        return []
+    return ["", "### Checks", *(f"- {'✓' if result.passed else '✗'} {result.name}" for result in checks)]
 
 
 def render_outcome(n: int, outcome: Outcome) -> str:
@@ -171,17 +230,31 @@ def render_report(outcomes: list[Outcome]) -> str:
     return "\n\n".join([header, *(render_outcome(n, o) for n, o in enumerate(outcomes, 1))])
 
 
-async def main() -> None:
+def outcome_ok(outcome: Outcome) -> bool:
+    match outcome:
+        case Failure():
+            return False
+        case Success(checks=checks):
+            return all(result.passed for result in checks)
+
+
+async def main() -> bool:
     scenarios = load_scenarios()
     async with lifespan():
         provider = ThrottledProvider(ClaudeAgentSDKProvider(), asyncio.Semaphore(CONCURRENCY))
         runner = InterviewRunner(provider)
-        outcomes = await asyncio.gather(*(simulate(runner, provider, s) for s in scenarios))
+        outcomes = await asyncio.gather(
+            *(
+                simulate(runner, provider, scenario, checks)
+                for scenario, checks in zip(scenarios, EXPECTATIONS, strict=True)
+            )
+        )
     report = render_report(list(outcomes))
     DUMP.parent.mkdir(parents=True, exist_ok=True)
     DUMP.write_text(report)
     print(report)
+    return all(outcome_ok(outcome) for outcome in outcomes)
 
 
 if __name__ == "__main__":
-    anyio.run(main)
+    sys.exit(0 if anyio.run(main) else 1)

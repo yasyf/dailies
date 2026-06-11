@@ -24,6 +24,8 @@ from dailies.models import (
     TaskStatus,
     TextBlock,
     Trigger,
+    WorkflowTrigger,
+    WorkflowTriggerDraft,
 )
 from dailies.state import MAX_ROWS
 
@@ -61,7 +63,7 @@ CONSTRAINT_STARTERS = frozenset(
         "ON",
     }
 )
-TRIGGER_GLYPHS: Mapping[str, str] = {"cron": "⏰", "event": "⚡", "manual": "✋"}
+TRIGGER_GLYPHS: Mapping[str, str] = {"cron": "⏰", "event": "⚡", "manual": "✋", "workflow": "⛓"}
 RUN_STATUS_STYLES: Mapping[RunStatus, str] = {
     "pending": "dim",
     "running": "yellow",
@@ -117,7 +119,7 @@ class WorkflowCard:
     prompt: str
     rules: tuple[str, ...]
     ddl: str
-    triggers: tuple[Trigger, ...]
+    triggers: tuple[Trigger | WorkflowTriggerDraft, ...]
     version: int | None = None
     status: TaskStatus | None = None
 
@@ -157,7 +159,7 @@ def parse_ddl(ddl: str) -> tuple[TableSummary, ...]:
     return tuple(summary for statement in ddl.split(";") if (summary := parse_statement(statement)) is not None)
 
 
-def render_trigger(trigger: Trigger) -> str:
+def render_trigger(trigger: Trigger | WorkflowTriggerDraft) -> str:
     match trigger:
         case CronTrigger(cron_expression=expr, timezone=tz):
             return f"cron {expr} ({tz})"
@@ -165,6 +167,10 @@ def render_trigger(trigger: Trigger) -> str:
             return f"event {source} {event}/{key}"
         case ManualTrigger():
             return "manual"
+        case WorkflowTrigger(workflow_id=workflow_id):
+            return f"workflow {str(workflow_id)[:8]} completed"
+        case WorkflowTriggerDraft(workflow=name):
+            return f"workflow {name} completed"
 
 
 def render_firing(firing: Firing) -> str:
@@ -221,7 +227,7 @@ def flow_arrow() -> Static:
     return Static("│\n▼", classes="flow-arrow")
 
 
-def trigger_box(*triggers: Trigger) -> Vertical:
+def trigger_box(*triggers: Trigger | WorkflowTriggerDraft) -> Vertical:
     return flow_box(
         *(Static(f"{TRIGGER_GLYPHS[trigger.kind]} {render_trigger(trigger)}", markup=False) for trigger in triggers),
         title="trigger" if len(triggers) == 1 else "triggers",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from rich.table import Table
@@ -31,6 +31,8 @@ from dailies.models import (
     WorkflowDefinition,
     WorkflowDraft,
     WorkflowId,
+    WorkflowTrigger,
+    WorkflowTriggerDraft,
 )
 from dailies.state import MAX_ROWS
 from tests.fakes import FakeWorkflow
@@ -176,9 +178,15 @@ def test_excerpt(text: str, limit: int, expected: str) -> None:
             id="event",
         ),
         pytest.param(ManualTrigger(), "manual", id="manual"),
+        pytest.param(
+            WorkflowTrigger(workflow_id=WorkflowId(UUID("12345678-1234-5678-1234-567812345678"))),
+            "workflow 12345678 completed",
+            id="workflow-resolved",
+        ),
+        pytest.param(WorkflowTriggerDraft(workflow="tracker-a"), "workflow tracker-a completed", id="workflow-draft"),
     ],
 )
-def test_render_trigger(trigger: Trigger, expected: str) -> None:
+def test_render_trigger(trigger: Trigger | WorkflowTriggerDraft, expected: str) -> None:
     assert render_trigger(trigger) == expected
 
 

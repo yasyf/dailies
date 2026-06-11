@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -10,18 +11,38 @@ from dailies.models import (
     Action,
     CronExpr,
     CronTrigger,
+    DraftTrigger,
     EventTrigger,
     Firing,
     ManualTrigger,
     StatusUpdate,
     StopCondition,
+    TaskDraft,
+    TaskProposal,
     Trigger,
+    WorkflowDraft,
+    WorkflowId,
+    WorkflowTrigger,
+    WorkflowTriggerDraft,
 )
 
 pytestmark = pytest.mark.unit
 
 trigger_adapter: TypeAdapter[Trigger] = TypeAdapter(Trigger)
+draft_trigger_adapter: TypeAdapter[DraftTrigger] = TypeAdapter(DraftTrigger)
 stop_adapter: TypeAdapter[StopCondition] = TypeAdapter(StopCondition)
+
+CRON = CronTrigger(cron_expression=CronExpr("0 7 * * *"))
+
+
+def draft(name: str, *triggers: DraftTrigger) -> WorkflowDraft:
+    return WorkflowDraft(name=name, summary="s", prompt="p", ddl="CREATE TABLE t (x TEXT)", triggers=list(triggers))
+
+
+def proposal(*workflows: WorkflowDraft) -> TaskProposal:
+    return TaskProposal(
+        task=TaskDraft(name="T", description="d", user_input="u", prompt="p"), workflows=list(workflows)
+    )
 
 
 @pytest.mark.parametrize(
@@ -33,12 +54,59 @@ stop_adapter: TypeAdapter[StopCondition] = TypeAdapter(StopCondition)
         ),
         pytest.param({"kind": "event", "source": "gmail", "event": "query", "key": "abc"}, EventTrigger, id="event"),
         pytest.param({"kind": "manual"}, ManualTrigger, id="manual"),
+        pytest.param(
+            {"kind": "workflow", "workflow_id": UUID("12345678-1234-5678-1234-567812345678")},
+            WorkflowTrigger,
+            id="workflow",
+        ),
     ],
 )
-def test_trigger_discriminated_roundtrip(payload: dict[str, str], expected: type) -> None:
+def test_trigger_discriminated_roundtrip(payload: dict[str, object], expected: type) -> None:
     parsed = trigger_adapter.validate_python(payload)
     assert isinstance(parsed, expected)
     assert trigger_adapter.dump_python(parsed) == payload
+
+
+def test_draft_trigger_union_parses_workflow_by_name() -> None:
+    parsed = draft_trigger_adapter.validate_python({"kind": "workflow", "workflow": "tracker-a"})
+    assert parsed == WorkflowTriggerDraft(workflow="tracker-a")
+
+
+def test_proposal_accepts_fan_in() -> None:
+    fan_in = proposal(
+        draft("tracker-a", CRON),
+        draft("tracker-b", CRON),
+        draft("decider", WorkflowTriggerDraft(workflow="tracker-a"), WorkflowTriggerDraft(workflow="tracker-b")),
+    )
+    assert [w.name for w in fan_in.workflows] == ["tracker-a", "tracker-b", "decider"]
+
+
+def test_proposal_rejects_self_referencing_trigger() -> None:
+    with pytest.raises(ValidationError, match="cycle"):
+        proposal(draft("a", WorkflowTriggerDraft(workflow="a")))
+
+
+def test_proposal_rejects_unknown_sibling() -> None:
+    with pytest.raises(ValidationError, match="unknown sibling"):
+        proposal(draft("a", WorkflowTriggerDraft(workflow="ghost")))
+
+
+def test_proposal_rejects_cycle() -> None:
+    with pytest.raises(ValidationError, match="cycle"):
+        proposal(draft("a", WorkflowTriggerDraft(workflow="b")), draft("b", WorkflowTriggerDraft(workflow="a")))
+
+
+def test_proposal_rejects_duplicate_workflow_names() -> None:
+    with pytest.raises(ValidationError, match="duplicate workflow names"):
+        proposal(draft("a", CRON), draft("a", CRON))
+
+
+def test_workflow_trigger_roundtrips_in_firing() -> None:
+    firing = Firing(
+        trigger=WorkflowTrigger(workflow_id=WorkflowId(UUID("12345678-1234-5678-1234-567812345678"))),
+        occurrence_ids=["r1"],
+    )
+    assert Firing.model_validate(firing.model_dump()) == firing
 
 
 def test_firing_defaults_to_no_occurrences() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -21,6 +22,8 @@ from dailies.models import (
     WorkflowDefinition,
     WorkflowDraft,
     WorkflowId,
+    WorkflowTrigger,
+    WorkflowTriggerDraft,
     new_uuid,
 )
 from dailies.state import apply_ddl, task_db_key, validate_ddl, workflow_db_key
@@ -96,8 +99,11 @@ def render_interview(interview: Interview) -> str:
     )
 
 
-def draft_triggers(draft: WorkflowDraft) -> list[Trigger]:
-    return draft.triggers
+def draft_triggers(draft: WorkflowDraft, *, ids: Mapping[str, WorkflowId]) -> list[Trigger]:
+    return [
+        WorkflowTrigger(workflow_id=ids[trigger.workflow]) if isinstance(trigger, WorkflowTriggerDraft) else trigger
+        for trigger in draft.triggers
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,16 +143,17 @@ async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Tas
         shared_ddl=SchemaStr(proposal.task.shared_ddl) if proposal.task.shared_ddl else None,
         status=status,
     )
+    ids = {draft.name: WorkflowId(new_uuid()) for draft in proposal.workflows}
     workflows = [
         Workflow(
             task_id=task.uid,
-            workflow_id=WorkflowId(new_uuid()),
+            workflow_id=ids[draft.name],
             version=1,
             name=draft.name,
             definition=WorkflowDefinition(summary=draft.summary, prompt=PromptStr(draft.prompt), rules=draft.rules),
             ddl=SchemaStr(draft.ddl),
             status=status,
-            triggers=draft_triggers(draft),
+            triggers=draft_triggers(draft, ids=ids),
         )
         for draft in proposal.workflows
     ]

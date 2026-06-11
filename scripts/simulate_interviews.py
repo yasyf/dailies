@@ -26,7 +26,6 @@ from dailies.interface.rendering import render_trigger
 from dailies.interview import (
     InterviewError,
     InterviewRunner,
-    draft_triggers,
     persist_proposal,
     render_interview,
 )
@@ -117,7 +116,7 @@ async def simulate(runner: InterviewRunner, provider: AgentProvider, scenario: s
 
 
 def render_workflow(draft: WorkflowDraft) -> str:
-    triggers = ", ".join(f"`{render_trigger(t)}`" for t in draft_triggers(draft))
+    triggers = ", ".join(f"`{render_trigger(t)}`" for t in draft.triggers)
     rules = "\n".join(f"    - {rule}" for rule in draft.rules) or "    - _(none)_"
     return "\n".join(
         [

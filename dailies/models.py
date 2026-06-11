@@ -5,7 +5,7 @@ from typing import Annotated, Literal, NewType
 from uuid import UUID
 
 import uuid6
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 from tzlocal import get_localzone_name
 
 LOCAL_TZ = get_localzone_name()
@@ -69,7 +69,20 @@ class ManualTrigger(FrozenModel):
     kind: Literal["manual"] = "manual"
 
 
-type Trigger = Annotated[CronTrigger | EventTrigger | ManualTrigger, Field(discriminator="kind")]
+class WorkflowTrigger(FrozenModel):
+    kind: Literal["workflow"] = "workflow"
+    workflow_id: WorkflowId
+
+
+class WorkflowTriggerDraft(FrozenModel):
+    kind: Literal["workflow"] = "workflow"
+    workflow: str
+
+
+type Trigger = Annotated[CronTrigger | EventTrigger | ManualTrigger | WorkflowTrigger, Field(discriminator="kind")]
+type DraftTrigger = Annotated[
+    CronTrigger | EventTrigger | ManualTrigger | WorkflowTriggerDraft, Field(discriminator="kind")
+]
 
 
 class Firing(StoredModel):
@@ -146,9 +159,27 @@ class WorkflowDraft(FrozenModel):
     prompt: str
     rules: list[str] = Field(default_factory=list)
     ddl: str
-    triggers: Annotated[list[Trigger], Field(min_length=1)]
+    triggers: Annotated[list[DraftTrigger], Field(min_length=1)]
 
 
 class TaskProposal(FrozenModel):
     task: TaskDraft
     workflows: list[WorkflowDraft]
+
+    @model_validator(mode="after")
+    def check_workflow_references(self) -> TaskProposal:
+        names = [draft.name for draft in self.workflows]
+        if len(names) != len(set(names)):
+            raise ValueError(f"duplicate workflow names: {sorted(names)}")
+        edges = {
+            draft.name: {trigger.workflow for trigger in draft.triggers if isinstance(trigger, WorkflowTriggerDraft)}
+            for draft in self.workflows
+        }
+        if unknown := set().union(*edges.values()) - set(names):
+            raise ValueError(f"workflow trigger references unknown sibling: {sorted(unknown)}")
+        while leaves := [name for name, upstreams in edges.items() if not upstreams & edges.keys()]:
+            for name in leaves:
+                del edges[name]
+        if edges:
+            raise ValueError(f"workflow triggers form a cycle: {sorted(edges)}")
+        return self

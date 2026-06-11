@@ -220,6 +220,29 @@ async def test_invoke_agent_marks_failure(mongo: AsyncMongoClient[dict[str, Any]
     assert reloaded.status == "failed"
 
 
+async def test_set_status_terminal_sets_finished_at(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    workflow = make_workflow()
+    await workflow.insert()
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        fired_by=[Firing(trigger=ManualTrigger())],
+    )
+    await run.insert()
+    engine = Engine()
+    await engine.set_status(run, "running")
+    reloaded = await Run.get(run.uid)
+    assert reloaded is not None
+    assert reloaded.finished_at is None
+    before = datetime.now(UTC).replace(microsecond=0)
+    await engine.set_status(run, "succeeded")
+    reloaded = await Run.get(run.uid)
+    assert reloaded is not None
+    assert reloaded.finished_at is not None
+    assert before <= reloaded.finished_at <= datetime.now(UTC)
+
+
 async def test_record_status_appends_once(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     workflow = make_workflow()
     await workflow.insert()

@@ -150,8 +150,9 @@ def tick() -> None:
     async def go() -> None:
         async with lifespan():
             engine = Engine()
-            await engine.fire_due(now=datetime.now(UTC))
-            await engine.poll_subscriptions()
+            now = datetime.now(UTC)
+            await engine.fire_due(now=now)
+            await engine.poll_subscriptions(now=now)
 
     anyio.run(go)
 

@@ -260,7 +260,7 @@ async def test_poll_materializes_declared_trigger(mongo: AsyncMongoClient[dict[s
     workflow = make_workflow(triggers=[QUERY_TRIGGER])
     await workflow.insert()
     before = floor_ms(utcnow())
-    assert await engine(FakeGmail()).poll_subscriptions() == []
+    assert await engine(FakeGmail()).poll_subscriptions(now=utcnow()) == []
     stored = await subscription_for(workflow)
     assert (stored.source, stored.event, stored.key, stored.origin) == ("gmail", "query", "alice@", "trigger")
     assert before <= stored.watermark <= utcnow()
@@ -271,10 +271,10 @@ async def test_new_version_dropping_declaration_prunes(mongo: AsyncMongoClient[d
     gmail = FakeGmail()
     workflow = make_workflow(triggers=[QUERY_TRIGGER])
     await workflow.insert()
-    await engine(gmail).poll_subscriptions()
+    await engine(gmail).poll_subscriptions(now=utcnow())
     assert await Subscription.find_all().count() == 1
     await make_workflow(workflow_id=workflow.workflow_id, version=2).insert()
-    await engine(gmail).poll_subscriptions()
+    await engine(gmail).poll_subscriptions(now=utcnow())
     assert await Subscription.find_all().count() == 0
 
 
@@ -289,7 +289,7 @@ async def test_agent_origin_subscription_survives_pruning(mongo: AsyncMongoClien
         watermark=utcnow(),
         origin="agent",
     ).insert()
-    assert await engine(FakeGmail()).poll_subscriptions() == []
+    assert await engine(FakeGmail()).poll_subscriptions(now=utcnow()) == []
     assert (await subscription_for(workflow)).origin == "agent"
 
 
@@ -304,7 +304,7 @@ async def test_agent_origin_subscription_survives_pruning(mongo: AsyncMongoClien
 async def test_unknown_declaration_crashes(mongo: AsyncMongoClient[dict[str, Any]], trigger: EventTrigger) -> None:
     await make_workflow(triggers=[trigger]).insert()
     with pytest.raises(ValueError, match="unknown event trigger"):
-        await engine(FakeGmail()).poll_subscriptions()
+        await engine(FakeGmail()).poll_subscriptions(now=utcnow())
 
 
 async def test_poll_without_news_fires_nothing(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
@@ -313,8 +313,8 @@ async def test_poll_without_news_fires_nothing(mongo: AsyncMongoClient[dict[str,
     workflow = make_workflow(triggers=[QUERY_TRIGGER])
     await workflow.insert()
     eng = engine(gmail)
-    assert await eng.poll_subscriptions() == []
-    assert await eng.poll_subscriptions() == []
+    assert await eng.poll_subscriptions(now=utcnow()) == []
+    assert await eng.poll_subscriptions(now=utcnow()) == []
     assert await Run.find_all().count() == 0
 
 
@@ -323,16 +323,16 @@ async def test_new_message_fires_one_run_and_promotes_watermark(mongo: AsyncMong
     workflow = make_workflow(triggers=[QUERY_TRIGGER])
     await workflow.insert()
     eng = engine(gmail)
-    await eng.poll_subscriptions()
+    await eng.poll_subscriptions(now=utcnow())
     arrival = future(5)
     gmail.add(email("m1", date=arrival))
-    (run,) = await eng.poll_subscriptions()
+    (run,) = await eng.poll_subscriptions(now=utcnow())
     refreshed = await reloaded(run)
     assert refreshed.workflow_id == workflow.workflow_id
     assert refreshed.status == "succeeded"
     assert refreshed.fired_by == [Firing(trigger=QUERY_TRIGGER, occurrence_ids=["m1"])]
     assert (await subscription_for(workflow)).watermark == arrival
-    assert await eng.poll_subscriptions() == []
+    assert await eng.poll_subscriptions(now=utcnow()) == []
     assert await Run.find_all().count() == 1
 
 
@@ -341,14 +341,14 @@ async def test_failed_run_keeps_watermark_and_refires(mongo: AsyncMongoClient[di
     workflow = make_workflow(triggers=[QUERY_TRIGGER])
     await workflow.insert()
     failing = engine(gmail, ok=False)
-    await failing.poll_subscriptions()
+    await failing.poll_subscriptions(now=utcnow())
     seeded = (await subscription_for(workflow)).watermark
     arrival = future(5)
     gmail.add(email("m1", date=arrival))
-    (failed,) = await failing.poll_subscriptions()
+    (failed,) = await failing.poll_subscriptions(now=utcnow())
     assert (await reloaded(failed)).status == "failed"
     assert (await subscription_for(workflow)).watermark == seeded
-    (retried,) = await engine(gmail).poll_subscriptions()
+    (retried,) = await engine(gmail).poll_subscriptions(now=utcnow())
     refreshed = await reloaded(retried)
     assert refreshed.status == "succeeded"
     assert refreshed.fired_by == [Firing(trigger=QUERY_TRIGGER, occurrence_ids=["m1"])]
@@ -361,11 +361,11 @@ async def test_two_newsy_watches_batch_into_one_run(mongo: AsyncMongoClient[dict
     workflow = make_workflow(triggers=[QUERY_TRIGGER, THREAD_TRIGGER])
     await workflow.insert()
     eng = engine(gmail)
-    await eng.poll_subscriptions()
+    await eng.poll_subscriptions(now=utcnow())
     query_arrival, thread_arrival = future(5), future(6)
     gmail.add(email("m-query", thread_id="t-other", date=query_arrival))
     gmail.add(email("m-thread", thread_id="t-watch", sender="bob@example.com", date=thread_arrival))
-    (run,) = await eng.poll_subscriptions()
+    (run,) = await eng.poll_subscriptions(now=utcnow())
     refreshed = await reloaded(run)
     assert refreshed.status == "succeeded"
     assert len(refreshed.fired_by) == 2
@@ -386,11 +386,11 @@ async def test_same_key_on_two_workflows_keeps_independent_watermarks(
         storage=state_storage(),
         gmail=gmail,
     )
-    await eng.poll_subscriptions()
+    await eng.poll_subscriptions(now=utcnow())
     seeds = {workflow.workflow_id: (await subscription_for(workflow)).watermark for workflow in (first, second)}
     arrival = future(5)
     gmail.add(email("m1", date=arrival))
-    runs = [await reloaded(run) for run in await eng.poll_subscriptions()]
+    runs = [await reloaded(run) for run in await eng.poll_subscriptions(now=utcnow())]
     assert {run.workflow_id for run in runs} == {first.workflow_id, second.workflow_id}
     assert sorted(run.status for run in runs) == ["failed", "succeeded"]
     assert [run.fired_by for run in runs] == [[Firing(trigger=QUERY_TRIGGER, occurrence_ids=["m1"])]] * 2
@@ -414,7 +414,7 @@ async def test_inactive_workflow_not_polled(mongo: AsyncMongoClient[dict[str, An
         origin="agent",
     ).insert()
     gmail.add(email("m1", date=future(5)))
-    assert await engine(gmail).poll_subscriptions() == []
+    assert await engine(gmail).poll_subscriptions(now=utcnow()) == []
     assert await Run.find_all().count() == 0
     assert (await subscription_for(workflow)).watermark == seeded
 
@@ -434,7 +434,7 @@ async def test_thread_gone_drops_agent_skips_trigger_others_fire(mongo: AsyncMon
         watermark=past(),
         origin="agent",
     ).insert()
-    (run,) = await engine(gmail).poll_subscriptions()
+    (run,) = await engine(gmail).poll_subscriptions(now=utcnow())
     refreshed = await reloaded(run)
     assert refreshed.status == "succeeded"
     assert refreshed.fired_by == [Firing(trigger=QUERY_TRIGGER, occurrence_ids=["m1"])]
@@ -469,11 +469,11 @@ async def test_message_arriving_mid_run_refires_next_poll(mongo: AsyncMongoClien
     injecting = Engine(
         provider=InjectingProvider(gmail, email("m-mid-run", date=mid_run)), storage=state_storage(), gmail=gmail
     )
-    await injecting.poll_subscriptions()
+    await injecting.poll_subscriptions(now=utcnow())
     gmail.add(email("m1", date=fired_at))
-    (run,) = await injecting.poll_subscriptions()
+    (run,) = await injecting.poll_subscriptions(now=utcnow())
     assert (await reloaded(run)).fired_by == [Firing(trigger=QUERY_TRIGGER, occurrence_ids=["m1"])]
     assert (await subscription_for(workflow)).watermark == fired_at
-    (refire,) = await engine(gmail).poll_subscriptions()
+    (refire,) = await engine(gmail).poll_subscriptions(now=utcnow())
     assert (await reloaded(refire)).fired_by == [Firing(trigger=QUERY_TRIGGER, occurrence_ids=["m-mid-run"])]
     assert (await subscription_for(workflow)).watermark == mid_run

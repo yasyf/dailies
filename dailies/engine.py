@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from beanie.operators import In, Max
+from beanie.operators import GT, In, Max
 from croniter import croniter
 from loguru import logger
 
@@ -18,10 +18,14 @@ from dailies.models import (
     CronTrigger,
     EventTrigger,
     Firing,
+    ManualTrigger,
     RunStatus,
     StatusUpdate,
     TextBlock,
+    Trigger,
     WorkflowId,
+    WorkflowTrigger,
+    utcnow,
 )
 from dailies.runtime import RunContext
 from dailies.storage import StateStorage, state_storage
@@ -32,6 +36,11 @@ from dailies.web import BrowserClient, WebClient, browser_client, chrome_availab
 # First-sweep lookback: a long-idle workflow fires at most one slot within this window
 # (fire-at-most-once-per-sweep, no catch-up). Tune to match the dly tick cadence.
 LOOKBACK = timedelta(days=1)
+
+# Debounce for workflow-completion triggers: while any upstream completion is younger
+# than this, hold all of a workflow's completion occurrences so near-simultaneous
+# finishes coalesce into one downstream run.
+SETTLE_WINDOW = timedelta(minutes=5)
 
 SYSTEM = (
     "You are the dailies workflow runner. Execute the user's workflow prompt using only the provided "
@@ -67,6 +76,28 @@ async def workflow_cursor(workflow: Workflow, *, now: datetime) -> datetime:
     return max(latest.created_at if latest else workflow.created_at, now - LOOKBACK)
 
 
+def subscription_key(trigger: Trigger, *, workflow: Workflow) -> tuple[str, str, str] | None:
+    match trigger:
+        case EventTrigger(source="gmail", event=("thread" | "query") as event, key=key):
+            return ("gmail", event, key)
+        case EventTrigger(source=source, event=event):
+            raise ValueError(f"unknown event trigger {source}/{event} on workflow {workflow.workflow_id}")
+        case WorkflowTrigger(workflow_id=upstream):
+            return ("workflow", "completed", str(upstream))
+        case CronTrigger() | ManualTrigger():
+            return None
+
+
+def firing_trigger(subscription: Subscription) -> Trigger:
+    match subscription.source:
+        case "gmail":
+            return EventTrigger(source=subscription.source, event=subscription.event, key=subscription.key)
+        case "workflow":
+            return WorkflowTrigger(workflow_id=WorkflowId(UUID(subscription.key)))
+        case source:
+            raise ValueError(f"unknown subscription source: {source}")
+
+
 @dataclass(frozen=True, slots=True)
 class TriggerFired:
     workflow_id: WorkflowId
@@ -80,6 +111,13 @@ class Occurrence:
     subscription: Subscription
     new_ids: list[str]
     latest: datetime
+
+
+def settle(occurrences: list[Occurrence], *, now: datetime) -> list[Occurrence]:
+    completions = [o for o in occurrences if o.subscription.source == "workflow"]
+    if any(occurrence.latest > now - SETTLE_WINDOW for occurrence in completions):
+        return [o for o in occurrences if o.subscription.source != "workflow"]
+    return occurrences
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,14 +212,8 @@ class Engine:
         return list(current.values())
 
     async def materialize_subscriptions(self, workflow: Workflow) -> None:
-        declared = {
-            (trigger.source, trigger.event, trigger.key)
-            for trigger in workflow.triggers
-            if isinstance(trigger, EventTrigger)
-        }
+        declared = {watch for trigger in workflow.triggers if (watch := subscription_key(trigger, workflow=workflow))}
         for source, event, key in declared:
-            if source != "gmail" or event not in ("thread", "query"):
-                raise ValueError(f"unknown event trigger {source}/{event} on workflow {workflow.workflow_id}")
             existing = await Subscription.find_one(
                 Subscription.workflow_id == workflow.workflow_id,
                 Subscription.source == source,
@@ -189,7 +221,7 @@ class Engine:
                 Subscription.key == key,
             )
             if existing is None:
-                await insert_subscription(workflow.workflow_id, event, key, origin="trigger")
+                await insert_subscription(workflow.workflow_id, source, event, key, origin="trigger")
         async for subscription in Subscription.find(
             Subscription.workflow_id == workflow.workflow_id, Subscription.origin == "trigger"
         ):
@@ -197,6 +229,15 @@ class Engine:
                 await subscription.delete()
 
     async def observe(self, subscription: Subscription) -> Occurrence | None:
+        match subscription.source:
+            case "gmail":
+                return await self.observe_gmail(subscription)
+            case "workflow":
+                return await self.observe_completions(subscription)
+            case source:
+                raise ValueError(f"unknown subscription source: {source}")
+
+    async def observe_gmail(self, subscription: Subscription) -> Occurrence | None:
         try:
             metas = await news_since(self.gmail, subscription)
         except ThreadNotFound:
@@ -211,19 +252,26 @@ class Engine:
             return None
         return Occurrence(subscription=subscription, new_ids=[meta.id for meta in metas], latest=metas[-1].date)
 
+    async def observe_completions(self, subscription: Subscription) -> Occurrence | None:
+        runs = (
+            await Run.find(
+                Run.workflow_id == WorkflowId(UUID(subscription.key)),
+                Run.status == "succeeded",
+                GT(Run.finished_at, subscription.watermark),
+            )
+            .sort("+finished_at")
+            .to_list()
+        )
+        if not (completions := [(str(run.uid), at) for run in runs if (at := run.finished_at)]):
+            return None
+        return Occurrence(subscription=subscription, new_ids=[uid for uid, _ in completions], latest=completions[-1][1])
+
     async def fire_occurrences(self, workflow_id: WorkflowId, occurrences: list[Occurrence]) -> Run:
         run = await self.dispatch(
             TriggerFired(
                 workflow_id,
                 [
-                    Firing(
-                        trigger=EventTrigger(
-                            source=occurrence.subscription.source,
-                            event=occurrence.subscription.event,
-                            key=occurrence.subscription.key,
-                        ),
-                        occurrence_ids=occurrence.new_ids,
-                    )
+                    Firing(trigger=firing_trigger(occurrence.subscription), occurrence_ids=occurrence.new_ids)
                     for occurrence in occurrences
                 ],
             )
@@ -233,7 +281,7 @@ class Engine:
                 await occurrence.subscription.update(Max({Subscription.watermark: occurrence.latest}))
         return run
 
-    async def poll_subscriptions(self) -> list[Run]:
+    async def poll_subscriptions(self, *, now: datetime) -> list[Run]:
         workflows = await self.latest_active_workflows()
         for workflow in workflows:
             await self.materialize_subscriptions(workflow)
@@ -244,8 +292,8 @@ class Engine:
             watched.setdefault(subscription.workflow_id, []).append(subscription)
         runs: list[Run] = []
         for workflow_id, subscriptions in watched.items():
-            occurrences = [o for subscription in subscriptions if (o := await self.observe(subscription))]
-            if occurrences:
+            observed = [o for subscription in subscriptions if (o := await self.observe(subscription))]
+            if occurrences := settle(observed, now=now):
                 runs.append(await self.fire_occurrences(workflow_id, occurrences))
         return runs
 
@@ -286,7 +334,11 @@ class Engine:
         await self.set_status(run, "succeeded" if result.ok else "failed")
 
     async def set_status(self, run: Run, status: RunStatus) -> None:
-        await run.update({"$set": {"status": status}})
+        match status:
+            case "succeeded" | "failed" | "stopped":
+                await run.update({"$set": {"status": status, "finished_at": utcnow()}})
+            case _:
+                await run.update({"$set": {"status": status}})
         emit(RunStatusChanged(run_id=run.uid, status=status))
 
     async def record_status(self, run: Run, update: StatusUpdate) -> None:

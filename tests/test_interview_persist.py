@@ -9,7 +9,15 @@ from pymongo import AsyncMongoClient
 
 from dailies.documents import Task, Workflow
 from dailies.interview import persist_proposal
-from dailies.models import CronExpr, CronTrigger, TaskDraft, TaskProposal, WorkflowDraft
+from dailies.models import (
+    CronExpr,
+    CronTrigger,
+    TaskDraft,
+    TaskProposal,
+    WorkflowDraft,
+    WorkflowTrigger,
+    WorkflowTriggerDraft,
+)
 from dailies.state import task_db_key, workflow_db_key
 
 pytestmark = pytest.mark.integration
@@ -91,3 +99,28 @@ async def test_persist_proposal_invalid_ddl_persists_nothing(
     assert await Task.find_all().count() == 0
     assert await Workflow.find_all().count() == 0
     assert list(state_dir.rglob("*.sqlite")) == []
+
+
+async def test_persist_resolves_workflow_trigger_to_sibling_id(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    fan_in = TaskProposal(
+        task=TaskDraft(name="Scout", description="d", user_input="u", prompt="p"),
+        workflows=[
+            WorkflowDraft(
+                name="tracker",
+                summary="s",
+                prompt="p",
+                ddl="CREATE TABLE t (x TEXT)",
+                triggers=[CronTrigger(cron_expression=CronExpr("0 7 * * *"))],
+            ),
+            WorkflowDraft(
+                name="decider",
+                summary="s",
+                prompt="p",
+                ddl="CREATE TABLE d (x TEXT)",
+                triggers=[WorkflowTriggerDraft(workflow="tracker")],
+            ),
+        ],
+    )
+    task = await persist_proposal(fan_in, status="draft")
+    workflows = {w.name: w for w in await Workflow.find(Workflow.task_id == task.uid).to_list()}
+    assert workflows["decider"].triggers == [WorkflowTrigger(workflow_id=workflows["tracker"].workflow_id)]

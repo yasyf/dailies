@@ -85,6 +85,7 @@ class Run(TimestampedDocument):
     task_id: TaskId
     fired_by: list[Firing]
     status: RunStatus = "pending"
+    finished_at: datetime | None = None
     status_updates: list[StatusUpdate] = Field(default_factory=list)
     actions: list[Action] = Field(default_factory=list)
 

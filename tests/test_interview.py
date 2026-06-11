@@ -6,12 +6,16 @@ from dailies.interview import InterviewRunner, draft_triggers
 from dailies.models import (
     CronExpr,
     CronTrigger,
+    DraftTrigger,
     EventTrigger,
     Interview,
     InterviewTurn,
     ManualTrigger,
-    Trigger,
     WorkflowDraft,
+    WorkflowId,
+    WorkflowTrigger,
+    WorkflowTriggerDraft,
+    new_uuid,
 )
 from tests.fakes import ToolScriptedProvider
 
@@ -85,6 +89,48 @@ async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> 
         pytest.param(ManualTrigger(), id="manual"),
     ],
 )
-def test_draft_triggers(trigger: Trigger) -> None:
+def test_draft_triggers(trigger: DraftTrigger) -> None:
     draft = WorkflowDraft(name="w", summary="s", prompt="p", rules=[], ddl="CREATE TABLE t (x TEXT)", triggers=[trigger])
-    assert draft_triggers(draft) == [trigger]
+    assert draft_triggers(draft, ids={}) == [trigger]
+
+
+def test_draft_triggers_resolves_workflow_name_to_id() -> None:
+    tracker_id = WorkflowId(new_uuid())
+    draft = WorkflowDraft(
+        name="decider",
+        summary="s",
+        prompt="p",
+        rules=[],
+        ddl="CREATE TABLE t (x TEXT)",
+        triggers=[WorkflowTriggerDraft(workflow="tracker")],
+    )
+    assert draft_triggers(draft, ids={"tracker": tracker_id}) == [WorkflowTrigger(workflow_id=tracker_id)]
+
+
+FAN_IN_PROPOSAL = {
+    "task": {"name": "Scout", "description": "d", "user_input": "u", "prompt": "p", "shared_ddl": None},
+    "workflows": [
+        {
+            "name": "tracker",
+            "summary": "s",
+            "prompt": "p",
+            "rules": [],
+            "ddl": "CREATE TABLE t (x TEXT)",
+            "triggers": [{"kind": "cron", "cron_expression": "0 7 * * *", "timezone": "UTC"}],
+        },
+        {
+            "name": "decider",
+            "summary": "s",
+            "prompt": "p",
+            "rules": [],
+            "ddl": "CREATE TABLE d (x TEXT)",
+            "triggers": [{"kind": "workflow", "workflow": "tracker"}],
+        },
+    ],
+}
+
+
+async def test_synthesize_parses_workflow_trigger() -> None:
+    provider = ToolScriptedProvider([{"value": FAN_IN_PROPOSAL}])
+    result = await InterviewRunner(provider).synthesize(Interview(scenario="u"))
+    assert result.workflows[1].triggers == [WorkflowTriggerDraft(workflow="tracker")]

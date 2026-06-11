@@ -202,7 +202,7 @@ def test_tick_fires_cron_then_polls_subscriptions(monkeypatch: pytest.MonkeyPatc
         calls.append("fire_due")
         return []
 
-    async def fake_poll(self: Engine) -> list[object]:
+    async def fake_poll(self: Engine, *, now: datetime) -> list[object]:
         calls.append("poll_subscriptions")
         return []
 

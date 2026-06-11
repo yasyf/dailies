@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from beanie.operators import GT, In, Max
 from croniter import croniter
 from loguru import logger
+from pymongo.errors import DuplicateKeyError
 
 from dailies import tools
 from dailies.agent import AgentProvider, AgentRequest, ClaudeAgentSDKProvider
@@ -39,8 +40,11 @@ LOOKBACK = timedelta(days=1)
 
 # Debounce for workflow-completion triggers: while any upstream completion is younger
 # than this, hold all of a workflow's completion occurrences so near-simultaneous
-# finishes coalesce into one downstream run.
+# finishes coalesce into one downstream run. MAX_HOLD bounds the debounce — once any
+# pending completion has waited this long, the batch fires even if more keep arriving,
+# so a chatty upstream cannot starve its downstream.
 SETTLE_WINDOW = timedelta(minutes=5)
+MAX_HOLD = timedelta(minutes=15)
 
 SYSTEM = (
     "You are the dailies workflow runner. Execute the user's workflow prompt using only the provided "
@@ -110,12 +114,15 @@ class Occurrence:
 
     subscription: Subscription
     new_ids: list[str]
+    earliest: datetime
     latest: datetime
 
 
 def settle(occurrences: list[Occurrence], *, now: datetime) -> list[Occurrence]:
     completions = [o for o in occurrences if o.subscription.source == "workflow"]
-    if any(occurrence.latest > now - SETTLE_WINDOW for occurrence in completions):
+    fresh = any(occurrence.latest > now - SETTLE_WINDOW for occurrence in completions)
+    overdue = any(occurrence.earliest <= now - MAX_HOLD for occurrence in completions)
+    if fresh and not overdue:
         return [o for o in occurrences if o.subscription.source != "workflow"]
     return occurrences
 
@@ -211,7 +218,7 @@ class Engine:
                 current[workflow.workflow_id] = workflow
         return list(current.values())
 
-    async def materialize_subscriptions(self, workflow: Workflow) -> None:
+    async def materialize_subscriptions(self, workflow: Workflow, *, now: datetime) -> None:
         declared = {watch for trigger in workflow.triggers if (watch := subscription_key(trigger, workflow=workflow))}
         for source, event, key in declared:
             existing = await Subscription.find_one(
@@ -221,7 +228,10 @@ class Engine:
                 Subscription.key == key,
             )
             if existing is None:
-                await insert_subscription(workflow.workflow_id, source, event, key, origin="trigger")
+                try:
+                    await insert_subscription(workflow.workflow_id, source, event, key, watermark=now, origin="trigger")
+                except DuplicateKeyError:
+                    logger.info("subscription already materialized by a concurrent tick: {}/{}/{}", source, event, key)
         async for subscription in Subscription.find(
             Subscription.workflow_id == workflow.workflow_id, Subscription.origin == "trigger"
         ):
@@ -250,7 +260,12 @@ class Engine:
             return None
         if not metas:
             return None
-        return Occurrence(subscription=subscription, new_ids=[meta.id for meta in metas], latest=metas[-1].date)
+        return Occurrence(
+            subscription=subscription,
+            new_ids=[meta.id for meta in metas],
+            earliest=metas[0].date,
+            latest=metas[-1].date,
+        )
 
     async def observe_completions(self, subscription: Subscription) -> Occurrence | None:
         runs = (
@@ -264,7 +279,12 @@ class Engine:
         )
         if not (completions := [(str(run.uid), at) for run in runs if (at := run.finished_at)]):
             return None
-        return Occurrence(subscription=subscription, new_ids=[uid for uid, _ in completions], latest=completions[-1][1])
+        return Occurrence(
+            subscription=subscription,
+            new_ids=[uid for uid, _ in completions],
+            earliest=completions[0][1],
+            latest=completions[-1][1],
+        )
 
     async def fire_occurrences(self, workflow_id: WorkflowId, occurrences: list[Occurrence]) -> Run:
         run = await self.dispatch(
@@ -284,7 +304,7 @@ class Engine:
     async def poll_subscriptions(self, *, now: datetime) -> list[Run]:
         workflows = await self.latest_active_workflows()
         for workflow in workflows:
-            await self.materialize_subscriptions(workflow)
+            await self.materialize_subscriptions(workflow, now=now)
         watched: dict[WorkflowId, list[Subscription]] = {}
         for subscription in await Subscription.find(
             In(Subscription.workflow_id, [workflow.workflow_id for workflow in workflows])

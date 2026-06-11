@@ -219,6 +219,51 @@ async def test_settle_window_holds_then_fires(mongo: AsyncMongoClient[dict[str, 
     assert (await reloaded(run)).workflow_id == downstream.workflow_id
 
 
+async def test_chatty_upstream_fires_after_max_hold(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    upstream = make_workflow(name="tracker")
+    downstream = make_workflow(task_id=upstream.task_id, name="decider", triggers=[completion_trigger(upstream)])
+    await upstream.insert()
+    await downstream.insert()
+    eng = engine()
+    await eng.poll_subscriptions(now=utcnow())
+    first = await completed_run(upstream, finished_at=future(5))
+    second = await completed_run(upstream, finished_at=(utcnow() + timedelta(minutes=14)).replace(microsecond=0))
+    (run,) = await eng.poll_subscriptions(now=minutes_ahead(16))
+    assert completion_firings(await reloaded(run)) == {upstream.workflow_id: [str(first.uid), str(second.uid)]}
+
+
+async def test_completion_during_materializing_tick_not_lost(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    upstream = make_workflow(name="tracker")
+    downstream = make_workflow(task_id=upstream.task_id, name="decider", triggers=[completion_trigger(upstream)])
+    await upstream.insert()
+    await downstream.insert()
+    tick_now = utcnow() - timedelta(minutes=2)
+    finished = (utcnow() - timedelta(minutes=1)).replace(microsecond=0)
+    completion = await completed_run(upstream, finished_at=finished)
+    eng = engine()
+    assert await eng.poll_subscriptions(now=tick_now) == []
+    (run,) = await eng.poll_subscriptions(now=minutes_ahead(10))
+    assert completion_firings(await reloaded(run)) == {upstream.workflow_id: [str(completion.uid)]}
+
+
+async def test_concurrent_materialize_tolerates_duplicate_insert(
+    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream = make_workflow(name="tracker")
+    downstream = make_workflow(task_id=upstream.task_id, name="decider", triggers=[completion_trigger(upstream)])
+    await upstream.insert()
+    await downstream.insert()
+    eng = engine()
+    await eng.poll_subscriptions(now=utcnow())
+
+    async def stale_find_one(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(Subscription, "find_one", stale_find_one)
+    assert await eng.poll_subscriptions(now=utcnow()) == []
+    assert await Subscription.find_all().count() == 1
+
+
 async def test_fresh_completion_holds_older_sibling_completion(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     tracker_a = make_workflow(name="tracker-a")
     tracker_b = make_workflow(task_id=tracker_a.task_id, name="tracker-b")

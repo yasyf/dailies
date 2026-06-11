@@ -37,10 +37,16 @@ def info(subscription: Subscription) -> SubscriptionInfo:
 
 
 async def insert_subscription(
-    workflow_id: WorkflowId, source: str, event: str, key: str, *, origin: Literal["trigger", "agent"]
+    workflow_id: WorkflowId,
+    source: str,
+    event: str,
+    key: str,
+    *,
+    watermark: datetime,
+    origin: Literal["trigger", "agent"],
 ) -> Subscription:
     subscription = Subscription(
-        workflow_id=workflow_id, source=source, event=event, key=key, watermark=utcnow(), origin=origin
+        workflow_id=workflow_id, source=source, event=event, key=key, watermark=watermark, origin=origin
     )
     await subscription.insert()
     return subscription
@@ -89,7 +95,11 @@ class EmailToolSet(ToolSet):
         if existing := await self.find_subscription("thread", thread_id):
             return info(existing)
         await self.gmail.thread_metas(thread_id)
-        return info(await insert_subscription(self.context.workflow_id, "gmail", "thread", thread_id, origin="agent"))
+        return info(
+            await insert_subscription(
+                self.context.workflow_id, "gmail", "thread", thread_id, watermark=utcnow(), origin="agent"
+            )
+        )
 
     @tool
     async def subscribe_to_query(self, query: str) -> SubscriptionInfo:
@@ -100,7 +110,11 @@ class EmailToolSet(ToolSet):
         """
         if existing := await self.find_subscription("query", query):
             return info(existing)
-        return info(await insert_subscription(self.context.workflow_id, "gmail", "query", query, origin="agent"))
+        return info(
+            await insert_subscription(
+                self.context.workflow_id, "gmail", "query", query, watermark=utcnow(), origin="agent"
+            )
+        )
 
     @tool
     async def unsubscribe_from_thread(self, thread_id: str) -> None:

@@ -26,10 +26,15 @@ from dailies.models import (
     Trigger,
     WorkflowDefinition,
     WorkflowId,
+    WorkflowTrigger,
 )
 from tests.fakes import FakeProvider
 
 pytestmark = pytest.mark.integration
+
+FIRED_AT = datetime(2026, 6, 11, 16, 0, tzinfo=UTC)
+SIBLING_WORKFLOW = WorkflowId(uuid4())
+SIBLING_RUN = str(uuid4())
 
 
 def make_workflow(
@@ -179,10 +184,66 @@ async def test_invoke_agent_delegates(mongo: AsyncMongoClient[dict[str, Any]]) -
     assert [block.text for update in reloaded.status_updates for block in update.blocks] == ["done"]
     request = provider.requests[0]
     assert request.system == system_prompt(chrome=False)
-    assert request.prompt == workflow.definition.prompt
+    assert request.prompt == (
+        f"This run was fired by:\n- a manual run requested by the user\n\n{workflow.definition.prompt}"
+    )
     assert request.chrome is False
     assert "browse" in {spec.name for spec in request.tools}
     assert len(request.tools) == sum(len(ts.get_tools()) for ts in engine.build_toolsets(run))
+
+
+@pytest.mark.parametrize(
+    ("firings", "bullets"),
+    [
+        pytest.param([Firing(trigger=ManualTrigger())], ["- a manual run requested by the user"], id="manual"),
+        pytest.param(
+            [Firing(trigger=CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="America/Los_Angeles"))],
+            ["- the cron schedule `0 9 * * *` (America/Los_Angeles), fired at 2026-06-11T09:00-07:00"],
+            id="cron",
+        ),
+        pytest.param(
+            [Firing(trigger=CronTrigger(cron_expression=CronExpr("0 6 * * *"), timezone="America/Los_Angeles"))],
+            ["- the cron schedule `0 6 * * *` (America/Los_Angeles), fired at 2026-06-11T09:00-07:00"],
+            id="cron-catch-up-renders-firing-time-not-slot",
+        ),
+        pytest.param(
+            [
+                Firing(
+                    trigger=EventTrigger(source="gmail", event="query", key="from:a@b.com"),
+                    occurrence_ids=["m1", "m2"],
+                ),
+                Firing(trigger=EventTrigger(source="gmail", event="thread", key="t1"), occurrence_ids=["m3"]),
+            ],
+            [
+                "- new gmail query activity for `from:a@b.com` (message ids: m1, m2)",
+                "- new gmail thread activity for `t1` (message ids: m3)",
+            ],
+            id="event",
+        ),
+        pytest.param(
+            [Firing(trigger=WorkflowTrigger(workflow_id=SIBLING_WORKFLOW), occurrence_ids=[SIBLING_RUN])],
+            [f"- completion of sibling workflow `{SIBLING_WORKFLOW}` (run ids: {SIBLING_RUN})"],
+            id="workflow",
+        ),
+    ],
+)
+async def test_invoke_agent_prepends_firing_context(
+    mongo: AsyncMongoClient[dict[str, Any]], firings: list[Firing], bullets: list[str]
+) -> None:
+    workflow = make_workflow()
+    await workflow.insert()
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        fired_by=firings,
+    )
+    run.created_at = FIRED_AT
+    await run.insert()
+    provider = FakeProvider(AgentResult("done", ok=True))
+    await Engine(provider=provider, chrome=False).invoke_agent(run)
+    expected = "\n".join(["This run was fired by:", *bullets]) + f"\n\n{workflow.definition.prompt}"
+    assert provider.requests[0].prompt == expected
 
 
 async def test_invoke_agent_chrome_drops_browse(mongo: AsyncMongoClient[dict[str, Any]]) -> None:

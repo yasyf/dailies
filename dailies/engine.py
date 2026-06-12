@@ -70,6 +70,8 @@ SYSTEM = (
     "a run may have been fired by email activity. "
     "On the web, search_web finds pages, fetch_url reads one, and scrape extracts targeted content "
     "from a single page. "
+    "Each run's prompt opens with the firing context: what fired this run and, for email events, the "
+    "new message ids. "
 )
 CHROME_HINT = "For interactive multi-step web tasks, use the Claude-in-Chrome browser tools."
 BROWSE_HINT = "For interactive multi-step web tasks, call the browse tool with the goal stated as one task."
@@ -91,6 +93,23 @@ def cron_due(trigger: CronTrigger, *, now: datetime, since: datetime) -> bool:
 async def workflow_cursor(workflow: Workflow, *, now: datetime) -> datetime:
     latest = await Run.find(Run.workflow_doc_id == workflow.uid).sort("-created_at").first_or_none()
     return max(latest.created_at if latest else workflow.created_at, now - LOOKBACK)
+
+
+def describe_firing(firing: Firing, *, at: datetime) -> str:
+    match firing.trigger:
+        case ManualTrigger():
+            return "a manual run requested by the user"
+        case CronTrigger(cron_expression=expr, timezone=tz):
+            fired_at = at.astimezone(ZoneInfo(tz)).isoformat(timespec="minutes")
+            return f"the cron schedule `{expr}` ({tz}), fired at {fired_at}"
+        case EventTrigger(source=source, event=event, key=key):
+            return f"new {source} {event} activity for `{key}` (message ids: {', '.join(firing.occurrence_ids)})"
+        case WorkflowTrigger(workflow_id=workflow_id):
+            return f"completion of sibling workflow `{workflow_id}` (run ids: {', '.join(firing.occurrence_ids)})"
+
+
+def firing_context(firings: list[Firing], *, at: datetime) -> str:
+    return "\n".join(["This run was fired by:", *(f"- {describe_firing(firing, at=at)}" for firing in firings)])
 
 
 # Claim shape is insert-then-takeover, not FindOne.upsert: beanie's upsert(on_insert=...)
@@ -433,7 +452,7 @@ class Engine:
         result = await self.provider.run(
             AgentRequest(
                 system=system_prompt(chrome=self.chrome),
-                prompt=workflow.definition.prompt,
+                prompt=f"{firing_context(run.fired_by, at=run.created_at)}\n\n{workflow.definition.prompt}",
                 tools=specs,
                 chrome=self.chrome,
             )

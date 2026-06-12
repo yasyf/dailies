@@ -48,6 +48,7 @@ def test_auth_help_lists_integrations_and_status() -> None:
     result = CliRunner().invoke(main, ["auth", "--help"])
     assert result.exit_code == 0
     assert "gmail" in result.output
+    assert "onepassword" in result.output
     assert "status" in result.output
 
 
@@ -153,15 +154,18 @@ def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPat
     assert stored == Connection(connection_id="conn-1", provider_config_key="google-mail")
 
 
-def test_auth_status_unconnected() -> None:
+def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
     result = CliRunner().invoke(main, ["auth", "status"])
     assert result.exit_code == 0
-    assert "gmail: not connected (run `dly auth gmail`)" in result.output
-    assert "used by ActionToolSet, EmailToolSet" in result.output
+    lines = result.output.splitlines()
+    assert "gmail: not ready — run `dly auth gmail` — used by ActionToolSet, EmailToolSet" in lines
+    assert "onepassword: not ready — set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)" in lines
 
 
-def test_auth_status_connected(monkeypatch: pytest.MonkeyPatch, state_dir: Path) -> None:
+def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, state_dir: Path) -> None:
     monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
     (state_dir / "connections").mkdir(parents=True)
     (state_dir / "connections" / "gmail.json").write_text(
         Connection(connection_id="conn-1", provider_config_key="google-mail").model_dump_json()
@@ -174,8 +178,27 @@ def test_auth_status_connected(monkeypatch: pytest.MonkeyPatch, state_dir: Path)
     mock_clients(monkeypatch, handle)
     result = CliRunner().invoke(main, ["auth", "status"])
     assert result.exit_code == 0
-    assert "gmail: connected as yasyfm@gmail.com" in result.output
-    assert "used by ActionToolSet, EmailToolSet" in result.output
+    lines = result.output.splitlines()
+    assert "gmail: connected as yasyfm@gmail.com — used by ActionToolSet, EmailToolSet" in lines
+    assert "onepassword: ready" in lines
+
+
+def test_auth_onepassword_unset_prints_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
+    result = CliRunner().invoke(main, ["auth", "onepassword"])
+    assert result.exit_code == 1
+    lines = result.output.splitlines()
+    assert "To set up onepassword:" in lines
+    assert "  1. create a 1Password service account with read access to your vaults and copy its token" in lines
+    assert "  2. set OP_SERVICE_ACCOUNT_TOKEN" in lines
+    assert "Error: onepassword is not ready" in result.stderr
+
+
+def test_auth_onepassword_set_reports_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
+    result = CliRunner().invoke(main, ["auth", "onepassword"])
+    assert result.exit_code == 0
+    assert result.output == "onepassword: ready\n"
 
 
 def test_db_init_runs() -> None:

@@ -11,7 +11,16 @@ import httpx
 
 from dailies.agent import ClaudeAgentSDKProvider
 from dailies.browser import COOKIE_BROWSERS, import_cookies
-from dailies.connections import INTEGRATIONS, Connection, Integration, NotConnected, connection_store
+from dailies.connections import (
+    INTEGRATIONS,
+    Connection,
+    EnvIntegration,
+    Integration,
+    NangoIntegration,
+    connection_store,
+    integration_ready,
+    unready_fix,
+)
 from dailies.db import lifespan
 from dailies.engine import Engine, TriggerFired
 from dailies.gmail import NANGO_API, NangoGmailClient, checked
@@ -47,7 +56,7 @@ def db_init() -> None:
     anyio.run(go)
 
 
-async def account_email(integration: Integration) -> str:
+async def account_email(integration: NangoIntegration) -> str:
     match integration.name:
         case "gmail":
             return (await NangoGmailClient(store=connection_store()).profile()).email
@@ -55,7 +64,9 @@ async def account_email(integration: Integration) -> str:
             raise KeyError(unknown)
 
 
-async def await_connection(client: httpx.AsyncClient, *, end_user_id: str, integration: Integration) -> Connection:
+async def await_connection(
+    client: httpx.AsyncClient, *, end_user_id: str, integration: NangoIntegration
+) -> Connection:
     try:
         with anyio.fail_after(AUTH_TIMEOUT):
             while True:
@@ -79,7 +90,7 @@ async def await_connection(client: httpx.AsyncClient, *, end_user_id: str, integ
         ) from None
 
 
-async def connect_integration(integration: Integration) -> None:
+async def connect_integration(integration: NangoIntegration) -> None:
     headers = {"Authorization": f"Bearer {os.environ['NANGO_SECRET_KEY']}"}
     end_user_id = f"dly-{uuid4().hex}"
     async with httpx.AsyncClient(base_url=NANGO_API, headers=headers) as client:
@@ -99,15 +110,34 @@ async def connect_integration(integration: Integration) -> None:
     click.echo(f"Authenticated {await account_email(integration)}")
 
 
+async def verify_env_integration(integration: EnvIntegration) -> None:
+    if await integration_ready(integration):
+        click.echo(f"{integration.name}: ready")
+        return
+    click.echo(f"To set up {integration.name}:")
+    for step, line in enumerate((integration.hint, *(f"set {var}" for var in integration.env_vars)), start=1):
+        click.echo(f"  {step}. {line}")
+    raise click.ClickException(f"{integration.name} is not ready")
+
+
 @main.group()
 def auth() -> None:
-    """Connect external integrations via Nango."""
+    """Connect external integrations."""
 
 
 def auth_command(integration: Integration) -> click.Command:
-    @click.command(integration.name, help=f"Connect {integration.name} through a Nango connect link.")
-    def connect() -> None:
-        anyio.run(connect_integration, integration)
+    match integration:
+        case NangoIntegration() as nango:
+
+            @click.command(nango.name, help=f"Connect {nango.name} through a Nango connect link.")
+            def connect() -> None:
+                anyio.run(connect_integration, nango)
+
+        case EnvIntegration() as env:
+
+            @click.command(env.name, help=f"Verify {env.name} credentials or print setup instructions.")
+            def connect() -> None:
+                anyio.run(verify_env_integration, env)
 
     return connect
 
@@ -118,18 +148,20 @@ for integration in INTEGRATIONS.values():
 
 @auth.command()
 def status() -> None:
-    """Show each integration's connection, account, and dependent toolsets."""
+    """Show each integration's readiness, account, and dependent toolsets."""
 
     async def go() -> None:
-        store = connection_store()
         for name, integration in INTEGRATIONS.items():
             users = ", ".join(sorted(ts.__name__ for ts in ToolSet.__subclasses__() if name in ts.integrations))
-            try:
-                await store.load(name)
-            except NotConnected:
-                click.echo(f"{name}: not connected (run `dly auth {name}`) — used by {users}")
+            suffix = f" — used by {users}" if users else ""
+            if not await integration_ready(integration):
+                click.echo(f"{name}: not ready — {await unready_fix(integration)}{suffix}")
                 continue
-            click.echo(f"{name}: connected as {await account_email(integration)} — used by {users}")
+            match integration:
+                case NangoIntegration() as nango:
+                    click.echo(f"{name}: connected as {await account_email(nango)}{suffix}")
+                case EnvIntegration():
+                    click.echo(f"{name}: ready{suffix}")
 
     anyio.run(go)
 

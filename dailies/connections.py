@@ -1,22 +1,44 @@
-"""Per-integration credential store: one Nango connection per external service."""
+"""Integration registry and readiness: Nango-connected services and env-credentialed ones."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Annotated, Literal, Protocol
+
+from pydantic import Field
 
 from dailies.models import FrozenModel, StoredModel
 from dailies.storage import StateStorage, state_storage
 
 
-class Integration(FrozenModel):
+class NangoIntegration(FrozenModel):
     """A registry entry mapping an integration name to its Nango unique key."""
 
+    kind: Literal["nango"] = "nango"
     name: str
     provider_config_key: str
 
 
-INTEGRATIONS: dict[str, Integration] = {"gmail": Integration(name="gmail", provider_config_key="google-mail")}
+class EnvIntegration(FrozenModel):
+    """A registry entry for an integration credentialed by environment variables."""
+
+    kind: Literal["env"] = "env"
+    name: str
+    env_vars: tuple[str, ...]
+    hint: str
+
+
+type Integration = Annotated[NangoIntegration | EnvIntegration, Field(discriminator="kind")]
+
+INTEGRATIONS: dict[str, Integration] = {
+    "gmail": NangoIntegration(name="gmail", provider_config_key="google-mail"),
+    "onepassword": EnvIntegration(
+        name="onepassword",
+        env_vars=("OP_SERVICE_ACCOUNT_TOKEN",),
+        hint="create a 1Password service account with read access to your vaults and copy its token",
+    ),
+}
 
 
 class NotConnected(LookupError):
@@ -56,3 +78,25 @@ class StateConnectionStore:
 
 def connection_store() -> ConnectionStore:
     return StateConnectionStore(storage=state_storage())
+
+
+async def integration_ready(integration: Integration) -> bool:
+    """Whether the integration is usable: a stored Nango connection, or every env var present."""
+    match integration:
+        case NangoIntegration(name=name):
+            try:
+                await connection_store().load(name)
+            except NotConnected:
+                return False
+            return True
+        case EnvIntegration(env_vars=env_vars):
+            return all(var in os.environ for var in env_vars)
+
+
+async def unready_fix(integration: Integration) -> str:
+    """The one fix string for an unready integration, shared by `dly auth status` and activation."""
+    match integration:
+        case NangoIntegration(name=name):
+            return f"run `dly auth {name}`"
+        case EnvIntegration(name=name, env_vars=env_vars):
+            return f"set {' and '.join(env_vars)} (see `dly auth {name}`)"

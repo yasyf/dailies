@@ -32,6 +32,8 @@ from dailies.interview import (
     render_interview,
 )
 from dailies.models import (
+    LOCAL_TZ,
+    CronTrigger,
     Exchange,
     Interview,
     InterviewTurn,
@@ -54,7 +56,59 @@ ANSWERER_SYSTEM = (
     "tracks state in its own schema, so don't fixate on the literal tool."
 )
 
+SUBSTRATE_LEAK_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (r"\bspreadsheet\b", r"\btab\b", r"\bchrome group\b", r"\bsub-?agents?\b")
+)
+INVENTED_TOOL_PATTERNS = tuple(
+    re.compile(rf"\b{name}\b", re.IGNORECASE)
+    for name in (
+        "flighty",
+        "1password",
+        "onepassword",
+        "8sleep",
+        r"eight\s*sleep",
+        "bluebubbles",
+        "11labs",
+        "elevenlabs",
+    )
+)
+PENALTY_STATE = re.compile(r"penalt", re.IGNORECASE)
+PENALTY_WORKFLOW_DECL = re.compile(
+    r"\bpenalt\w*\s+INTEGER\b|create\s+table\s+(?:if\s+not\s+exists\s+)?\w*penalt\w*(?<!_log)(?<!_logs)\s*\(",
+    re.IGNORECASE,
+)
+
 type Check = tuple[str, Callable[[TaskProposal], bool]]
+
+GLOBAL_CHECKS: tuple[Check, ...] = (
+    (
+        "no substrate leak in any prompt, summary, or rule",
+        lambda p: not any(pattern.search(text) for pattern in SUBSTRATE_LEAK_PATTERNS for text in texts(p)),
+    ),
+    (
+        "no invented outside tool in any prompt, summary, or rule",
+        lambda p: not any(pattern.search(text) for pattern in INVENTED_TOOL_PATTERNS for text in texts(p)),
+    ),
+)
+
+EVENT_TRIGGER_CHECK: Check = (
+    "at least one event trigger",
+    lambda p: any(trigger.kind == "event" for draft in p.workflows for trigger in draft.triggers),
+)
+
+LOCAL_CRON_CHECK: Check = (
+    f"every cron trigger in the user's local timezone ({LOCAL_TZ})",
+    lambda p: bool(crons := cron_triggers(p)) and all(trigger.timezone == LOCAL_TZ for trigger in crons),
+)
+
+GAPS_CHECK: Check = ("gaps flagged for uncatalogued capabilities", lambda p: bool(p.gaps))
+
+PENALTY_COUNTER_CHECK: Check = (
+    "penalty state lives in shared_ddl, with no penalty state declared per-workflow",
+    lambda p: bool(PENALTY_STATE.search(p.task.shared_ddl or ""))
+    and not any(PENALTY_WORKFLOW_DECL.search(draft.ddl) for draft in p.workflows),
+)
 
 SCENARIO2_CHECKS: tuple[Check, ...] = (
     ("exactly three workflows", lambda p: len(p.workflows) == 3),
@@ -68,7 +122,16 @@ SCENARIO2_CHECKS: tuple[Check, ...] = (
     ("decider reads shared state", lambda p: len(d := deciders(p)) == 1 and "shared." in d[0].prompt),
 )
 
-EXPECTATIONS: tuple[tuple[Check, ...], ...] = ((), SCENARIO2_CHECKS, (), (), ())
+EXPECTATIONS: tuple[tuple[Check, ...], ...] = tuple(
+    (*GLOBAL_CHECKS, *extra)
+    for extra in (
+        (),
+        (*SCENARIO2_CHECKS, LOCAL_CRON_CHECK),
+        (EVENT_TRIGGER_CHECK, GAPS_CHECK),
+        (EVENT_TRIGGER_CHECK, GAPS_CHECK),
+        (LOCAL_CRON_CHECK, PENALTY_COUNTER_CHECK, GAPS_CHECK),
+    )
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +170,17 @@ type Outcome = Success | Failure
 
 def trigger_kinds(draft: WorkflowDraft) -> set[str]:
     return {trigger.kind for trigger in draft.triggers}
+
+
+def texts(proposal: TaskProposal) -> list[str]:
+    return [
+        proposal.task.prompt,
+        *(text for draft in proposal.workflows for text in (draft.prompt, draft.summary, *draft.rules)),
+    ]
+
+
+def cron_triggers(proposal: TaskProposal) -> list[CronTrigger]:
+    return [trigger for draft in proposal.workflows for trigger in draft.triggers if isinstance(trigger, CronTrigger)]
 
 
 def collectors(proposal: TaskProposal) -> list[WorkflowDraft]:
@@ -200,6 +274,7 @@ def render_success(n: int, outcome: Success) -> str:
             f"- **description:** {proposal.task.description}",
             f"- **prompt:** {proposal.task.prompt}",
             f"- **shared_ddl:** `{proposal.task.shared_ddl or '—'}`",
+            f"- **gaps:** {'; '.join(proposal.gaps) or '—'}",
             f"- **persisted:** `{outcome.task.uid}` · status=`{outcome.task.status}`",
             "",
             f"### Workflows ({len(proposal.workflows)})",

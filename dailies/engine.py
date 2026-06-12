@@ -14,6 +14,7 @@ from pymongo.errors import DuplicateKeyError
 
 from dailies import tools
 from dailies.agent import AgentProvider, AgentRequest, ClaudeAgentSDKProvider
+from dailies.bluebubbles import IMessageClient, imessage_client
 from dailies.browser import BrowserBackend, browser_backend
 from dailies.documents import Run, Subscription, Workflow, WorkflowLease
 from dailies.gmail import GmailClient, ThreadNotFound, gmail_client
@@ -255,6 +256,7 @@ class Engine:
     provider: AgentProvider = field(default_factory=ClaudeAgentSDKProvider)
     storage: StateStorage = field(default_factory=state_storage)
     gmail: GmailClient = field(default_factory=gmail_client)
+    imessage: IMessageClient = field(default_factory=imessage_client)
     web: WebClient = field(default_factory=web_client)
     browser: BrowserBackend = field(default_factory=browser_backend)
     chrome: bool = field(default_factory=chrome_available)
@@ -444,6 +446,7 @@ class Engine:
             ),
             storage=self.storage,
             gmail=self.gmail,
+            imessage=self.imessage,
             web=self.web,
             browser=self.browser,
             chrome=self.chrome,

@@ -12,11 +12,11 @@ from dailies.models import Action, Exchange, InterviewTurn, PromptStr, TaskId, T
 from dailies.runtime import RunContext
 from dailies.storage import state_storage
 from dailies.tools import TOOLSETS, build_toolsets, render_catalog
-from dailies.tools.action import ActionToolSet, Notification, SentReceipt
+from dailies.tools.action import SentReceipt
 from dailies.tools.base import StructuredSink, ToolError, ToolSet, ToolSpec, tool
 from dailies.tools.inputs import BrowseToolSet
 from dailies.web import SearchResult
-from tests.fakes import FakeBrowser, FakeGmail, FakeWeb
+from tests.fakes import FakeBrowser, FakeGmail, FakeIMessage, FakeWeb
 
 pytestmark = pytest.mark.unit
 
@@ -29,6 +29,7 @@ def toolsets(
     gmail: FakeGmail,
     recorded: list[Action],
     *,
+    imessage: FakeIMessage | None = None,
     web: FakeWeb | None = None,
     browser: FakeBrowser | None = None,
     chrome: bool = False,
@@ -43,6 +44,7 @@ def toolsets(
         context(),
         storage=state_storage(),
         gmail=gmail,
+        imessage=imessage or FakeIMessage(),
         web=web or FakeWeb(),
         browser=browser or FakeBrowser(),
         chrome=chrome,
@@ -103,6 +105,18 @@ class AddToolSet(ToolSet):
     async def add(self, a: int, b: int) -> int:
         """Add two integers."""
         return a + b
+
+
+class GhostToolSet(ToolSet):
+    @tool
+    async def live(self) -> None:
+        """A live tool."""
+        raise NotImplementedError
+
+    @tool(draft=True)
+    async def ghost(self) -> None:
+        """A draft tool."""
+        raise NotImplementedError
 
 
 def schemas() -> dict[str, dict]:
@@ -176,9 +190,8 @@ def test_draft_tool_guard_requires_docstring() -> None:
 
 
 async def test_draft_stubs_raise_not_implemented() -> None:
-    toolset = next(ts for ts in toolsets(FakeGmail(), []) if isinstance(ts, ActionToolSet))
     with pytest.raises(NotImplementedError):
-        await toolset.notify(Notification(channel="c", title="t", body="b"))
+        await GhostToolSet().ghost()
 
 
 async def test_structured_sink_captures_validated_model() -> None:
@@ -201,6 +214,45 @@ async def test_send_email_records_one_action_after_send() -> None:
     assert receipt == SentReceipt(action_id=recorded[0].id, message_id="sent-0", thread_id="sent-thread-0")
     assert (recorded[0].kind, recorded[0].target) == ("email", "a@b.com")
     assert recorded[0].payload == {"subject": "s", "message_id": "sent-0", "thread_id": "sent-thread-0"}
+
+
+async def test_notify_imessage_sends_and_records_one_action() -> None:
+    imessage = FakeIMessage()
+    recorded: list[Action] = []
+    action_id = await spec_named(toolsets(FakeGmail(), recorded, imessage=imessage), "notify").invoke(
+        {"notification": {"channel": "imessage", "to": "+15551234567", "title": "Flight delayed", "body": "UA42 +2h"}}
+    )
+    assert imessage.sent == [("+15551234567", "Flight delayed\nUA42 +2h")]
+    assert [action.id for action in recorded] == [action_id]
+    assert (recorded[0].kind, recorded[0].target) == ("notification", "+15551234567")
+    assert recorded[0].payload == {"channel": "imessage", "title": "Flight delayed", "body": "UA42 +2h"}
+
+
+async def test_notify_imessage_failure_raises_tool_error_and_records_nothing() -> None:
+    recorded: list[Action] = []
+    spec = spec_named(toolsets(FakeGmail(), recorded, imessage=FakeIMessage(fail=True)), "notify")
+    with pytest.raises(ToolError) as excinfo:
+        await spec.invoke({"notification": {"channel": "imessage", "to": "+15551234567", "title": "t", "body": "b"}})
+    assert excinfo.value.error_type == "notify_failed"
+    assert excinfo.value.fix == "retry with channel='email'"
+    assert recorded == []
+
+
+async def test_notify_email_sends_with_title_as_subject() -> None:
+    gmail = FakeGmail()
+    recorded: list[Action] = []
+    action_id = await spec_named(toolsets(gmail, recorded), "notify").invoke(
+        {"notification": {"channel": "email", "to": "a@b.com", "title": "Flight delayed", "body": "UA42 +2h"}}
+    )
+    assert [(m.to, m.subject, m.body) for m in gmail.sent] == [("a@b.com", "Flight delayed", "UA42 +2h")]
+    assert [action.id for action in recorded] == [action_id]
+    assert (recorded[0].kind, recorded[0].target) == ("notification", "a@b.com")
+    assert recorded[0].payload == {"channel": "email", "title": "Flight delayed", "body": "UA42 +2h"}
+
+
+def test_notify_schema_channel_enum() -> None:
+    schema = spec_named(toolsets(FakeGmail(), []), "notify").input_schema
+    assert schema["$defs"]["Notification"]["properties"]["channel"]["enum"] == ["imessage", "email"]
 
 
 async def test_record_action_records_and_returns_id() -> None:
@@ -267,6 +319,14 @@ def test_render_catalog_groups_tools_by_toolset() -> None:
     assert "- send_email: Send an email and return a receipt with the action, message, and thread ids." in catalog
 
 
+def test_render_catalog_includes_notify_guidance() -> None:
+    assert (
+        "- notify: Send a one-way notification over iMessage or email and return the emitted action id; "
+        "pick the channel by urgency — imessage interrupts, email waits; if iMessage delivery fails, "
+        "retry the same notification with channel='email'."
+    ) in render_catalog()
+
+
 def test_render_catalog_enumerates_profile_fields() -> None:
     assert (
         "- get_profile: Return the user's profile: name, email, phone, iMessage handle, home address, timezone, "
@@ -282,11 +342,12 @@ def test_catalog_stays_in_sync_with_runtime_toolsets() -> None:
     assert [t.name for ts in sets for t in ts.get_tools() if f"- {t.name}: " not in catalog] == []
 
 
-def test_draft_tools_hidden_from_runtime_and_catalog() -> None:
-    drafts = {"notify"}
-    assert not drafts & tool_names(toolsets(FakeGmail(), []))
+def test_draft_tools_hidden_from_runtime_and_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert {t.name for t in GhostToolSet().get_tools()} == {"live"}
+    monkeypatch.setattr("dailies.tools.TOOLSETS", (GhostToolSet,))
     catalog = render_catalog()
-    assert [name for name in drafts if name in catalog] == []
+    assert "- live: A live tool." in catalog
+    assert "ghost" not in catalog
 
 
 async def test_web_tools_delegate_to_clients() -> None:

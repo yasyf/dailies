@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
+from dailies.bluebubbles import MessageSendFailed, SentMessage
 from dailies.connections import Connection, NotConnected
 from dailies.gmail import SEARCH_LIMIT, GmailProfile, MessageMeta, SentEmail, ThreadNotFound
 from dailies.gmail import EmailMessage as GmailMessage
@@ -258,6 +259,23 @@ class FakeGmail:
 
     async def profile(self) -> GmailProfile:
         return GmailProfile(email=self.address)
+
+
+@dataclass(frozen=True, slots=True)
+class FakeIMessage:
+    """In-memory IMessageClient: records sends as ``(to, text)``; ``fail`` simulates a BlueBubbles outage."""
+
+    sent: list[tuple[str, str]] = field(default_factory=list)
+    fail: bool = False
+
+    async def send(self, *, to: str, text: str) -> SentMessage:
+        if self.fail:
+            raise MessageSendFailed(f"BlueBubbles returned 500 sending to {to}: outage")
+        self.sent.append((to, text))
+        return SentMessage(guid=f"fake-{len(self.sent)}")
+
+    async def ping(self) -> bool:
+        return not self.fail
 
 
 @dataclass(frozen=True, slots=True)

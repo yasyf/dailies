@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from dailies.bluebubbles import IMessageClient
 from dailies.browser import BrowserBackend
 from dailies.gmail import GmailClient
 from dailies.runtime import RunContext
@@ -45,6 +46,7 @@ def build_toolsets(
     *,
     storage: StateStorage,
     gmail: GmailClient,
+    imessage: IMessageClient,
     web: WebClient,
     browser: BrowserBackend,
     chrome: bool,
@@ -53,7 +55,7 @@ def build_toolsets(
 ) -> tuple[ToolSet, ...]:
     return (
         StateToolSet(context, storage),
-        ActionToolSet(context, gmail, record, recorded),
+        ActionToolSet(context, gmail, imessage, record, recorded),
         EmailToolSet(context, gmail),
         WebToolSet(web),
         ProfileToolSet(),

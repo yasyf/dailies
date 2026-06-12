@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Literal
 from uuid import UUID
 
+import httpx
 from pydantic import JsonValue
 
+from dailies.bluebubbles import MessageSendFailed
 from dailies.models import Action, FrozenModel
 from dailies.runtime import RunContext
-from dailies.tools.base import ToolSet, tool
+from dailies.tools.base import ToolError, ToolSet, tool
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from dailies.bluebubbles import IMessageClient
     from dailies.gmail import GmailClient
 
 type ActionRecorder = Callable[[Action], Awaitable[None]]
@@ -20,7 +23,8 @@ type ActionReader = Callable[[], Awaitable[list[Action]]]
 
 
 class Notification(FrozenModel):
-    channel: str
+    channel: Literal["imessage", "email"]
+    to: str
     title: str
     body: str
 
@@ -37,6 +41,7 @@ class ActionToolSet(ToolSet):
 
     context: RunContext
     gmail: GmailClient
+    imessage: IMessageClient
     record: ActionRecorder
     recorded: ActionReader
 
@@ -61,10 +66,24 @@ class ActionToolSet(ToolSet):
         await self.record(action)
         return SentReceipt(action_id=action.id, message_id=sent.message_id, thread_id=sent.thread_id)
 
-    @tool(draft=True)
+    @tool
     async def notify(self, notification: Notification) -> UUID:
-        """Send a notification and return the emitted action id."""
-        raise NotImplementedError
+        """Send a one-way notification over iMessage or email and return the emitted action id; pick the channel by urgency — imessage interrupts, email waits; if iMessage delivery fails, retry the same notification with channel='email'."""  # noqa: E501
+        match notification.channel:
+            case "imessage":
+                try:
+                    await self.imessage.send(to=notification.to, text=f"{notification.title}\n{notification.body}")
+                except (MessageSendFailed, httpx.HTTPError) as exc:
+                    raise ToolError("notify_failed", str(exc), fix="retry with channel='email'") from exc
+            case "email":
+                await self.gmail.send(to=notification.to, subject=notification.title, body=notification.body)
+        action = Action(
+            kind="notification",
+            target=notification.to,
+            payload={"channel": notification.channel, "title": notification.title, "body": notification.body},
+        )
+        await self.record(action)
+        return action.id
 
     @tool
     async def record_action(self, kind: str, target: str, payload: dict[str, JsonValue] | None = None) -> UUID:

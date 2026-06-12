@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,10 +13,15 @@ import pytest
 from click.testing import CliRunner
 
 from dailies import cli
+from dailies.agent import ClaudeAgentSDKProvider
 from dailies.cli import main
-from dailies.connections import Connection
+from dailies.connections import Connection, NotConnected
 from dailies.engine import Engine, TriggerFired
+from dailies.gmail import GmailClient
+from dailies.interview import InterviewError
 from dailies.models import Firing, ManualTrigger, WorkflowId
+from dailies.profile import AccountSource, EmailSource, Profile, ProfileNotFound, Sourced, UserSource
+from dailies.web import WebClient
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +39,7 @@ def stub_lifespan(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_help_lists_commands() -> None:
     result = CliRunner().invoke(main, ["--help"])
     assert result.exit_code == 0
-    for command in ("run", "tick", "tui", "interview", "db", "auth", "browser"):
+    for command in ("run", "tick", "tui", "interview", "db", "auth", "browser", "profile"):
         assert command in result.output
 
 
@@ -219,16 +224,190 @@ def test_tui_invokes_run_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls == [{}]
 
 
-def test_interview_invokes_run_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+def user_sourced(value: str) -> Sourced[str]:
+    return Sourced[str](value=value, source=UserSource())
+
+
+DISCOVERED = Profile(
+    name=Sourced[str](
+        value="Yasyf",
+        source=EmailSource(
+            message_id="m1", sender="Yasyf <y@example.com>", subject="Re: hi", date=datetime(2026, 5, 12, tzinfo=UTC)
+        ),
+    ),
+    email=Sourced[str](value="y@example.com", source=AccountSource(detail="the connected gmail account")),
+)
+
+
+def patch_profile_io(
+    monkeypatch: pytest.MonkeyPatch, *, existing: Profile | None, discovered: Profile | None = None
+) -> tuple[list[Profile], list[ClaudeAgentSDKProvider]]:
+    saved: list[Profile] = []
+    providers: list[ClaudeAgentSDKProvider] = []
+
+    async def fake_load() -> Profile:
+        if existing is None:
+            raise ProfileNotFound
+        return existing
+
+    async def fake_save(profile: Profile) -> None:
+        saved.append(profile)
+
+    async def fake_discover(provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient) -> Profile:
+        providers.append(provider)
+        assert discovered is not None, "discover_profile must not run in this scenario"
+        return discovered
+
+    monkeypatch.setattr(cli, "load_profile", fake_load)
+    monkeypatch.setattr(cli, "save_profile", fake_save)
+    monkeypatch.setattr(cli, "discover_profile", fake_discover)
+    return saved, providers
+
+
+def patch_run_tui(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     calls: list[dict[str, object]] = []
 
     async def record(*args: object, **kwargs: object) -> None:
         calls.append(kwargs)
 
     monkeypatch.setattr(cli, "run_tui", record)
+    return calls
+
+
+def test_interview_with_profile_skips_mining(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_profile_io(monkeypatch, existing=DISCOVERED)
+    calls = patch_run_tui(monkeypatch)
     result = CliRunner().invoke(main, ["interview"])
     assert result.exit_code == 0
+    assert "No profile yet" not in result.output
     assert calls == [{"start_interview": True}]
+
+
+def test_interview_offers_mining_and_proceeds_on_decline(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, providers = patch_profile_io(monkeypatch, existing=None)
+    calls = patch_run_tui(monkeypatch)
+    result = CliRunner().invoke(main, ["interview"], input="n\n")
+    assert result.exit_code == 0
+    assert "No profile yet — mine your inbox to build one first?" in result.output
+    assert (saved, providers) == ([], [])
+    assert calls == [{"start_interview": True}]
+
+
+def test_interview_mines_inline_when_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, _ = patch_profile_io(monkeypatch, existing=None, discovered=DISCOVERED)
+    calls = patch_run_tui(monkeypatch)
+    result = CliRunner().invoke(main, ["interview"], input="y\ny\n")
+    assert result.exit_code == 0
+    assert "Mining your inbox and the web — this can take a few minutes..." in result.output
+    assert saved == [DISCOVERED]
+    assert calls == [{"start_interview": True}]
+
+
+def test_profile_init_mines_reviews_and_saves(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, providers = patch_profile_io(monkeypatch, existing=None, discovered=DISCOVERED)
+    result = CliRunner().invoke(main, ["profile", "init"], input="y\n")
+    assert result.exit_code == 0
+    assert "Mining your inbox and the web — this can take a few minutes..." in result.output
+    assert "name: Yasyf" in result.output
+    assert "found in email from Yasyf <y@example.com>, May 12, 2026 ('Re: hi')" in result.output
+    assert "email: y@example.com" in result.output
+    assert "from the connected gmail account" in result.output
+    assert "partner: Rebecca" in result.output
+    assert "Save this profile?" in result.output
+    assert "Profile saved." in result.output
+    assert saved == [DISCOVERED]
+    assert [type(provider) for provider in providers] == [ClaudeAgentSDKProvider]
+    assert providers[0].max_turns == 80
+
+
+def test_profile_init_declined_save_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, _ = patch_profile_io(monkeypatch, existing=None, discovered=DISCOVERED)
+    result = CliRunner().invoke(main, ["profile", "init"], input="n\n")
+    assert result.exit_code == 1
+    assert saved == []
+
+
+def test_profile_init_refuses_existing_without_force(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, providers = patch_profile_io(monkeypatch, existing=DISCOVERED)
+    result = CliRunner().invoke(main, ["profile", "init"])
+    assert result.exit_code == 1
+    assert "a profile already exists — re-run with --force to re-mine it" in result.stderr
+    assert (saved, providers) == ([], [])
+
+
+def test_profile_init_force_keeps_existing_values_discovery_missed(monkeypatch: pytest.MonkeyPatch) -> None:
+    existing = DISCOVERED.model_copy(update={"phone": user_sourced("+1 415 555 0100")})
+    rediscovered = DISCOVERED.model_copy(update={"home_address": user_sourced("123 Mission St")})
+    saved, _ = patch_profile_io(monkeypatch, existing=existing, discovered=rediscovered)
+    result = CliRunner().invoke(main, ["profile", "init", "--force"], input="y\n")
+    assert result.exit_code == 0
+    assert saved == [rediscovered.model_copy(update={"phone": user_sourced("+1 415 555 0100")})]
+
+
+def test_profile_init_not_connected_names_auth_fix(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_profile_io(monkeypatch, existing=None)
+
+    async def boom(provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient) -> Profile:
+        raise NotConnected("gmail")
+
+    monkeypatch.setattr(cli, "discover_profile", boom)
+    result = CliRunner().invoke(main, ["profile", "init"])
+    assert result.exit_code == 1
+    assert "gmail is not connected — run `dly auth gmail` first" in result.stderr
+
+
+def test_profile_init_interview_error_suggests_rerun(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_profile_io(monkeypatch, existing=None)
+
+    async def boom(provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient) -> Profile:
+        raise InterviewError("agent never submitted")
+
+    monkeypatch.setattr(cli, "discover_profile", boom)
+    result = CliRunner().invoke(main, ["profile", "init"])
+    assert result.exit_code == 1
+    assert "profile discovery failed: agent never submitted — re-run `dly profile init`" in result.stderr
+
+
+def test_profile_show_renders_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_profile_io(monkeypatch, existing=DISCOVERED)
+    result = CliRunner().invoke(main, ["profile", "show"])
+    assert result.exit_code == 0
+    assert "name: Yasyf" in result.output
+    assert "found in email from Yasyf <y@example.com>, May 12, 2026 ('Re: hi')" in result.output
+    assert "timezone:" in result.output
+    assert "partner: Rebecca" in result.output
+
+
+def test_profile_show_without_profile_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_profile_io(monkeypatch, existing=None)
+    result = CliRunner().invoke(main, ["profile", "show"])
+    assert result.exit_code == 1
+    assert "no profile saved — run `dly profile init` first" in result.stderr
+
+
+def test_profile_edit_sets_user_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, _ = patch_profile_io(monkeypatch, existing=DISCOVERED)
+    result = CliRunner().invoke(main, ["profile", "edit", "phone", "+1 415 555 0100"])
+    assert result.exit_code == 0
+    assert saved == [DISCOVERED.model_copy(update={"phone": user_sourced("+1 415 555 0100")})]
+
+
+def test_profile_edit_partner_subfield(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, _ = patch_profile_io(monkeypatch, existing=DISCOVERED)
+    result = CliRunner().invoke(main, ["profile", "edit", "partner.email", "rebecca@example.com"])
+    assert result.exit_code == 0
+    partner = DISCOVERED.partner.model_copy(update={"email": user_sourced("rebecca@example.com")})
+    assert saved == [DISCOVERED.model_copy(update={"partner": partner})]
+
+
+def test_profile_edit_unknown_field_lists_valid_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved, _ = patch_profile_io(monkeypatch, existing=DISCOVERED)
+    result = CliRunner().invoke(main, ["profile", "edit", "shoe_size", "12"])
+    assert result.exit_code == 1
+    assert "unknown field 'shoe_size'" in result.stderr
+    assert "partner.email" in result.stderr
+    assert "home_address" in result.stderr
+    assert saved == []
 
 
 def test_run_dispatches_one_manual_firing(monkeypatch: pytest.MonkeyPatch) -> None:

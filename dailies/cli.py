@@ -17,21 +17,38 @@ from dailies.connections import (
     EnvIntegration,
     Integration,
     NangoIntegration,
+    NotConnected,
     connection_store,
     integration_ready,
     unready_fix,
 )
 from dailies.db import lifespan
 from dailies.engine import Engine, TriggerFired
-from dailies.gmail import NANGO_API, NangoGmailClient, checked
+from dailies.gmail import NANGO_API, NangoGmailClient, checked, gmail_client
 from dailies.interface import TextualPresenter, run_tui
-from dailies.interview import InterviewRunner
-from dailies.models import Firing, ManualTrigger, WorkflowId
+from dailies.interview import InterviewError, InterviewRunner
+from dailies.models import Firing, ManualTrigger, Timezone, WorkflowId
+from dailies.profile import (
+    Profile,
+    ProfileNotFound,
+    Sourced,
+    UserSource,
+    describe,
+    discover_profile,
+    load_profile,
+    save_profile,
+)
 from dailies.storage import state_storage
 from dailies.tools import ToolSet
+from dailies.web import web_client
 
 AUTH_POLL_INTERVAL = 3.0
 AUTH_TIMEOUT = 300.0
+DISCOVERY_MAX_TURNS = 80
+
+PROFILE_SCALARS = ("name", "email", "phone", "imessage_handle", "home_address", "birthday", "employer", "role")
+PARTNER_SCALARS = ("email", "phone", "imessage_handle")
+PROFILE_FIELDS = (*PROFILE_SCALARS, "timezone", *(f"partner.{sub}" for sub in PARTNER_SCALARS))
 
 
 @click.group()
@@ -166,6 +183,180 @@ def status() -> None:
     anyio.run(go)
 
 
+def render_profile(found: Profile) -> str:
+    def entry(label: str, item: Sourced[str] | None, *, indent: str = "") -> list[str]:
+        return [] if item is None else [f"{indent}{label}: {item.value}", f"{indent}  {describe(item.source)}"]
+
+    def section(title: str, lines: list[str]) -> list[str]:
+        return [title, *lines] if lines else []
+
+    return "\n".join(
+        [
+            *(
+                line
+                for name in ("name", "email", "timezone", "phone", "imessage_handle", "home_address")
+                for line in entry(name.replace("_", " "), getattr(found, name))
+            ),
+            *(line for name in ("birthday", "employer", "role") for line in entry(name, getattr(found, name))),
+            f"partner: {found.partner.name}",
+            *(
+                line
+                for sub in PARTNER_SCALARS
+                for line in entry(sub.replace("_", " "), getattr(found.partner, sub), indent="  ")
+            ),
+            *section(
+                "loyalty programs:",
+                [
+                    line
+                    for program in found.loyalty_programs
+                    for line in (
+                        f"  {program.program} ({program.kind}"
+                        f"{f', {program.status_tier}' if program.status_tier else ''}): "
+                        f"{program.member_number.value}",
+                        f"    {describe(program.member_number.source)}",
+                    )
+                ],
+            ),
+            *section(
+                "merchants:",
+                [
+                    line
+                    for merchant in found.merchants
+                    for line in (
+                        f"  {merchant.name} ({merchant.category}{f', {merchant.cadence}' if merchant.cadence else ''})",
+                        f"    {describe(merchant.source)}",
+                    )
+                ],
+            ),
+            *section(
+                "facts:",
+                [
+                    line
+                    for fact in found.facts
+                    for line in (f"  {fact.label}: {fact.value}", f"    {describe(fact.source)}")
+                ],
+            ),
+        ]
+    )
+
+
+async def saved_profile() -> Profile | None:
+    try:
+        return await load_profile()
+    except ProfileNotFound:
+        return None
+
+
+def merge_profiles(discovered: Profile, existing: Profile) -> Profile:
+    partner = discovered.partner.model_copy(
+        update={
+            sub: value
+            for sub in PARTNER_SCALARS
+            if getattr(discovered.partner, sub) is None and (value := getattr(existing.partner, sub))
+        }
+    )
+    return discovered.model_copy(
+        update={"partner": partner}
+        | {
+            name: value
+            for name in ("phone", "imessage_handle", "home_address", "birthday", "employer", "role")
+            if getattr(discovered, name) is None and (value := getattr(existing, name))
+        }
+        | {
+            name: value
+            for name in ("loyalty_programs", "merchants", "facts")
+            if not getattr(discovered, name) and (value := getattr(existing, name))
+        }
+    )
+
+
+async def init_profile(*, force: bool = False) -> None:
+    existing = await saved_profile()
+    if existing is not None and not force:
+        raise click.ClickException("a profile already exists — re-run with --force to re-mine it")
+    click.echo("Mining your inbox and the web — this can take a few minutes...")
+    try:
+        discovered = await discover_profile(
+            ClaudeAgentSDKProvider(max_turns=DISCOVERY_MAX_TURNS), gmail=gmail_client(), web=web_client()
+        )
+    except NotConnected as exc:
+        raise click.ClickException(str(exc)) from exc
+    except InterviewError as exc:
+        raise click.ClickException(f"profile discovery failed: {exc} — re-run `dly profile init`") from exc
+    merged = merge_profiles(discovered, existing) if existing is not None else discovered
+    click.echo(render_profile(merged))
+    click.confirm("Save this profile?", abort=True)
+    await save_profile(merged)
+    click.echo("Profile saved.")
+
+
+def edit_field(saved: Profile, field: str, value: str) -> Profile:
+    match field.split("."):
+        case ["timezone"]:
+            return saved.model_copy(update={"timezone": Sourced[Timezone](value=value, source=UserSource())})
+        case [name] if name in PROFILE_SCALARS:
+            return saved.model_copy(update={name: Sourced[str](value=value, source=UserSource())})
+        case ["partner", sub] if sub in PARTNER_SCALARS:
+            partner = saved.partner.model_copy(update={sub: Sourced[str](value=value, source=UserSource())})
+            return saved.model_copy(update={"partner": partner})
+        case _:
+            raise click.ClickException(f"unknown field {field!r} — valid fields: {', '.join(PROFILE_FIELDS)}")
+
+
+@main.group()
+def profile() -> None:
+    """Manage the mined user profile that personalizes workflows."""
+
+
+@profile.command("init")
+@click.option("--force", is_flag=True, help="Re-mine even though a profile already exists.")
+def profile_init(force: bool) -> None:
+    """Mine the inbox and the web into a profile, review it, and save it."""
+
+    async def go() -> None:
+        async with lifespan():
+            await init_profile(force=force)
+
+    anyio.run(go)
+
+
+@profile.command("show")
+def profile_show() -> None:
+    """Show the saved profile, every value with its provenance."""
+
+    async def go() -> None:
+        async with lifespan():
+            try:
+                saved = await load_profile()
+            except ProfileNotFound as exc:
+                raise click.ClickException(str(exc)) from exc
+            click.echo(render_profile(saved))
+
+    anyio.run(go)
+
+
+@profile.command("edit")
+@click.argument("field")
+@click.argument("value")
+def profile_edit(field: str, value: str) -> None:
+    """Set one profile FIELD to VALUE, recorded as entered by you.
+
+    FIELD is a scalar profile field or a dotted partner subfield such as
+    partner.email; lists are re-mined via `dly profile init --force`.
+    """
+
+    async def go() -> None:
+        async with lifespan():
+            try:
+                saved = await load_profile()
+            except ProfileNotFound as exc:
+                raise click.ClickException(str(exc)) from exc
+            await save_profile(edit_field(saved, field, value))
+            click.echo(f"{field} = {value}")
+
+    anyio.run(go)
+
+
 @main.group()
 def browser() -> None:
     """Manage the per-workflow browser profile used by the browse tool."""
@@ -256,6 +447,10 @@ def interview() -> None:
 
     async def go() -> None:
         async with lifespan():
+            if await saved_profile() is None and click.confirm(
+                "No profile yet — mine your inbox to build one first?", default=True
+            ):
+                await init_profile()
             await run_tui(TextualPresenter(), build_interviewer(), start_interview=True)
 
     anyio.run(go)

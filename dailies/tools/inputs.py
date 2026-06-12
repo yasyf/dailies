@@ -177,7 +177,6 @@ class EmailToolSet(ToolSet):
 
 @dataclass(frozen=True, slots=True)
 class WebToolSet(ToolSet):
-    context: RunContext
     web: WebClient
 
     @tool

@@ -55,7 +55,7 @@ def build_toolsets(
         StateToolSet(context, storage),
         ActionToolSet(context, gmail, record, recorded),
         EmailToolSet(context, gmail),
-        WebToolSet(context, web),
+        WebToolSet(web),
         ProfileToolSet(),
         *(() if chrome else (BrowseToolSet(context, browser, storage),)),
     )

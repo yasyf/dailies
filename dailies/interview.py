@@ -29,7 +29,7 @@ from dailies.models import (
 from dailies.state import apply_ddl, task_db_key, validate_ddl, workflow_db_key
 from dailies.storage import state_storage
 from dailies.tools import render_catalog
-from dailies.tools.base import StructuredSink
+from dailies.tools.base import StructuredSink, ToolSet
 
 TURN_SYSTEM = (
     "You are running a short onboarding interview to design a recurring automated task for the user. "
@@ -101,12 +101,19 @@ class InterviewError(Exception):
     """The agent failed to produce a usable interview response."""
 
 
-async def collect[T: BaseModel](provider: AgentProvider, sink: StructuredSink[T], *, system: str, prompt: str) -> T:
+async def collect[T: BaseModel](
+    provider: AgentProvider,
+    sink: StructuredSink[T],
+    *,
+    system: str,
+    prompt: str,
+    toolsets: tuple[ToolSet, ...] = (),
+) -> T:
     result = await provider.run(
         AgentRequest(
             system=f"{system}\n\nCall the submit tool exactly once with the structured result; do not reply in prose.",
             prompt=prompt,
-            tools=tuple(t.to_spec() for t in sink.get_tools()),
+            tools=tuple(t.to_spec() for ts in (*toolsets, sink) for t in ts.get_tools()),
         )
     )
     if sink.result is None:

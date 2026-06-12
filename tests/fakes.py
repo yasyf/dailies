@@ -78,6 +78,21 @@ class ToolScriptedProvider:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolDrivingProvider:
+    """Fake provider that walks a script of named tool calls against the request's tools, capturing each result."""
+
+    script: list[tuple[str, dict[str, JsonValue]]]
+    outputs: list[object] = field(default_factory=list)
+    requests: list[AgentRequest] = field(default_factory=list)
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        self.requests.append(request)
+        specs = {spec.name: spec for spec in request.tools}
+        self.outputs.extend([await specs[name].invoke(args) for name, args in self.script])
+        return AgentResult(text="", ok=True)
+
+
+@dataclass(frozen=True, slots=True)
 class FakeTask:
     name: str
     uid: TaskId

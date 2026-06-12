@@ -168,7 +168,9 @@ def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     lines = result.output.splitlines()
     assert "gmail: not ready — run `dly auth gmail` — used by ActionToolSet, EmailToolSet" in lines
-    assert "onepassword: not ready — set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)" in lines
+    assert (
+        "onepassword: not ready — set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`) — used by VaultToolSet"
+    ) in lines
     assert "bluebubbles: not ready — set BLUEBUBBLES_URL and BLUEBUBBLES_PASSWORD (see `dly auth bluebubbles`)" in lines
 
 
@@ -191,7 +193,7 @@ def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, state_dir: Path) -> 
     assert result.exit_code == 0
     lines = result.output.splitlines()
     assert "gmail: connected as yasyfm@gmail.com — used by ActionToolSet, EmailToolSet" in lines
-    assert "onepassword: ready" in lines
+    assert "onepassword: ready — used by VaultToolSet" in lines
     assert "bluebubbles: ready" in lines
 
 

@@ -41,6 +41,7 @@ from dailies.models import (
     WorkflowId,
     utcnow,
 )
+from dailies.onepassword import Login, VaultLookupFailed
 from dailies.state import StateDump
 from dailies.web import SEARCH_RESULTS, SearchResult
 
@@ -308,6 +309,20 @@ class FakeBrowser:
         self.profiles.append(profile)
         profile.write_text(json.dumps({"cookies": [], "origins": []}))
         return self.result
+
+
+@dataclass(frozen=True, slots=True)
+class FakeVault:
+    """In-memory VaultClient: serves ``logins`` by item name; unknown items raise VaultLookupFailed."""
+
+    logins: dict[str, Login] = field(default_factory=dict)
+    fetched: list[str] = field(default_factory=list)
+
+    async def get_login(self, item: str) -> Login:
+        self.fetched.append(item)
+        if item not in self.logins:
+            raise VaultLookupFailed(item, f'"{item}" isn\'t an item in any vault')
+        return self.logins[item]
 
 
 @dataclass(frozen=True, slots=True)

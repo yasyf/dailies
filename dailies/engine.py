@@ -33,6 +33,7 @@ from dailies.models import (
     new_uuid,
     utcnow,
 )
+from dailies.onepassword import VaultClient, vault_client
 from dailies.runtime import RunContext
 from dailies.storage import StateStorage, state_storage
 from dailies.tools import ToolSet
@@ -259,6 +260,7 @@ class Engine:
     imessage: IMessageClient = field(default_factory=imessage_client)
     web: WebClient = field(default_factory=web_client)
     browser: BrowserBackend = field(default_factory=browser_backend)
+    vault: VaultClient = field(default_factory=vault_client)
     chrome: bool = field(default_factory=chrome_available)
 
     async def active_workflow(self, workflow_id: WorkflowId) -> Workflow:
@@ -449,6 +451,7 @@ class Engine:
             imessage=self.imessage,
             web=self.web,
             browser=self.browser,
+            vault=self.vault,
             chrome=self.chrome,
             record=record,
             recorded=recorded,

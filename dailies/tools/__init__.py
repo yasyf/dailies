@@ -5,6 +5,7 @@ import inspect
 from dailies.bluebubbles import IMessageClient
 from dailies.browser import BrowserBackend
 from dailies.gmail import GmailClient
+from dailies.onepassword import VaultClient
 from dailies.runtime import RunContext
 from dailies.storage import StateStorage
 from dailies.tools.action import ActionReader, ActionRecorder, ActionToolSet
@@ -12,6 +13,7 @@ from dailies.tools.base import Tool, ToolSet, ToolSpec, model_for, tool
 from dailies.tools.inputs import BrowseToolSet, EmailToolSet, WebToolSet
 from dailies.tools.profile import ProfileToolSet
 from dailies.tools.state import StateToolSet
+from dailies.tools.vault import VaultToolSet
 from dailies.web import WebClient
 
 TOOLSETS: tuple[type[ToolSet], ...] = (
@@ -21,6 +23,7 @@ TOOLSETS: tuple[type[ToolSet], ...] = (
     WebToolSet,
     BrowseToolSet,
     ProfileToolSet,
+    VaultToolSet,
 )
 
 
@@ -49,6 +52,7 @@ def build_toolsets(
     imessage: IMessageClient,
     web: WebClient,
     browser: BrowserBackend,
+    vault: VaultClient,
     chrome: bool,
     record: ActionRecorder,
     recorded: ActionReader,
@@ -59,5 +63,6 @@ def build_toolsets(
         EmailToolSet(context, gmail),
         WebToolSet(web),
         ProfileToolSet(),
+        VaultToolSet(context, vault),
         *(() if chrome else (BrowseToolSet(context, browser, storage),)),
     )

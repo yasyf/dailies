@@ -9,6 +9,7 @@ import pytest
 from dailies.browser import browser_profile_key
 from dailies.gmail import MAX_BODY, EmailMessage
 from dailies.models import Action, Exchange, InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId, utcnow
+from dailies.onepassword import Login
 from dailies.runtime import RunContext
 from dailies.storage import state_storage
 from dailies.tools import TOOLSETS, build_toolsets, render_catalog
@@ -16,7 +17,7 @@ from dailies.tools.action import SentReceipt
 from dailies.tools.base import StructuredSink, ToolError, ToolSet, ToolSpec, tool
 from dailies.tools.inputs import BrowseToolSet
 from dailies.web import SearchResult
-from tests.fakes import FakeBrowser, FakeGmail, FakeIMessage, FakeWeb
+from tests.fakes import FakeBrowser, FakeGmail, FakeIMessage, FakeVault, FakeWeb
 
 pytestmark = pytest.mark.unit
 
@@ -32,6 +33,7 @@ def toolsets(
     imessage: FakeIMessage | None = None,
     web: FakeWeb | None = None,
     browser: FakeBrowser | None = None,
+    vault: FakeVault | None = None,
     chrome: bool = False,
 ) -> tuple[ToolSet, ...]:
     async def record(action: Action) -> None:
@@ -47,6 +49,7 @@ def toolsets(
         imessage=imessage or FakeIMessage(),
         web=web or FakeWeb(),
         browser=browser or FakeBrowser(),
+        vault=vault or FakeVault(),
         chrome=chrome,
         record=record,
         recorded=recorded_actions,
@@ -284,6 +287,17 @@ async def test_list_actions_returns_recorded_actions_in_order() -> None:
     assert [action.id for action in actions] == [first.action_id, second]
 
 
+async def test_get_login_delegates_to_vault() -> None:
+    vault = FakeVault(logins={"github.com": Login(username="yasyf", password="hunter2", otp="488912")})
+    login = await spec_named(toolsets(FakeGmail(), [], vault=vault), "get_login").invoke({"item": "github.com"})
+    assert login == Login(username="yasyf", password="hunter2", otp="488912")
+    assert vault.fetched == ["github.com"]
+
+
+def test_get_login_schema_requires_item() -> None:
+    assert spec_named(toolsets(FakeGmail(), []), "get_login").input_schema["required"] == ["item"]
+
+
 async def test_get_thread_and_search_truncate_bodies() -> None:
     gmail = FakeGmail()
     gmail.add(email("m1", body="x" * (MAX_BODY + 1)))
@@ -314,9 +328,10 @@ def test_chrome_excludes_browse_toolset() -> None:
 
 def test_render_catalog_groups_tools_by_toolset() -> None:
     catalog = render_catalog()
-    assert {"State:", "Action:", "Email:", "Web:", "Browse:", "Profile:"} <= set(catalog.splitlines())
+    assert {"State:", "Action:", "Email:", "Web:", "Browse:", "Profile:", "Vault:"} <= set(catalog.splitlines())
     assert "- query_state: Run a read-only SQL query against this workflow's state database." in catalog
     assert "- send_email: Send an email and return a receipt with the action, message, and thread ids." in catalog
+    assert "- get_login: Fetch a login (username, password, otp) from 1Password by item name." in catalog
 
 
 def test_render_catalog_includes_notify_guidance() -> None:

@@ -465,7 +465,7 @@ def tasks() -> None:
         async with lifespan():
             async for task in Task.find_all():
                 live = len(await latest_workflows(task.uid))
-                click.echo(f"{task.uid}  {task.name} — {task.status} ({live} workflows)")
+                click.echo(f"{task.uid}  {task.name} — {task.status} ({live} workflow{'s' if live != 1 else ''})")
                 for gap in task.gaps:
                     click.echo(f"  gap: {gap}")
 
@@ -514,7 +514,8 @@ def activate(task_id: UUID, ack_gaps: bool, per_order_cap: int | None, weekly_ca
                 if policy is not None
                 else ""
             )
-            click.echo(f'Activated "{activated.name}": {len(await latest_workflows(tid))} workflows live{capped}')
+            live = len(await latest_workflows(tid))
+            click.echo(f'Activated "{activated.name}": {live} workflow{"s" if live != 1 else ""} live{capped}')
             click.echo("Next: `dly tick` runs due workflows (or wait for the scheduler).")
 
     anyio.run(go)

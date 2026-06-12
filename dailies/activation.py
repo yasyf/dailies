@@ -19,7 +19,7 @@ class ActivationError(Exception):
     """Activation refused; carries every unmet prerequisite at once."""
 
     def __init__(self, problems: list[Problem]) -> None:
-        super().__init__(f"{len(problems)} problems block activation")
+        super().__init__(f"{(n := len(problems))} problem{'s block' if n != 1 else ' blocks'} activation")
         self.problems = problems
 
 

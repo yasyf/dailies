@@ -542,7 +542,7 @@ def test_tasks_lists_ids_names_status_and_gaps(monkeypatch: pytest.MonkeyPatch) 
     assert result.exit_code == 0
     assert result.output.splitlines() == [
         f"{digest.uid}  Digest — active (2 workflows)",
-        f"{chaser.uid}  Mileage credit chaser — draft (1 workflows)",
+        f"{chaser.uid}  Mileage credit chaser — draft (1 workflow)",
         "  gap: push notifications to a phone",
     ]
 
@@ -573,7 +573,7 @@ def test_activate_without_caps_omits_spend_suffix(monkeypatch: pytest.MonkeyPatc
     result = CliRunner().invoke(main, ["activate", str(chaser.uid), "--ack-gaps"])
     assert result.exit_code == 0
     assert result.output.splitlines() == [
-        'Activated "Mileage credit chaser": 1 workflows live',
+        'Activated "Mileage credit chaser": 1 workflow live',
         "Next: `dly tick` runs due workflows (or wait for the scheduler).",
     ]
     assert captured == {"task_id": chaser.uid, "ack_gaps": True, "spend_policy": None}

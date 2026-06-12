@@ -261,9 +261,17 @@ def test_chrome_excludes_browse_toolset() -> None:
 
 def test_render_catalog_groups_tools_by_toolset() -> None:
     catalog = render_catalog()
-    assert {"State:", "Action:", "Email:", "Web:", "Browse:"} <= set(catalog.splitlines())
+    assert {"State:", "Action:", "Email:", "Web:", "Browse:", "Profile:"} <= set(catalog.splitlines())
     assert "- query_state: Run a read-only SQL query against this workflow's state database." in catalog
     assert "- send_email: Send an email and return the emitted action id." in catalog
+
+
+def test_render_catalog_enumerates_profile_fields() -> None:
+    assert (
+        "- get_profile: Return the user's profile: name, email, phone, iMessage handle, home address, timezone, "
+        "birthday, employer and role, partner contact (Rebecca: email/phone), airline and hotel loyalty programs "
+        "with member numbers, frequent merchants, and extra facts — each value with its source."
+    ) in render_catalog()
 
 
 def test_catalog_stays_in_sync_with_runtime_toolsets() -> None:

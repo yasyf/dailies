@@ -47,6 +47,9 @@ def valid_timezone(value: str) -> str:
     return value
 
 
+type Timezone = Annotated[str, AfterValidator(valid_timezone)]
+
+
 class FrozenModel(BaseModel):
     """Immutable value object that rejects unknown fields.
 
@@ -70,7 +73,7 @@ class StoredModel(BaseModel):
 class CronTrigger(FrozenModel):
     kind: Literal["cron"] = "cron"
     cron_expression: Annotated[CronExpr, AfterValidator(valid_cron)]
-    timezone: Annotated[str, AfterValidator(valid_timezone)] = LOCAL_TZ
+    timezone: Timezone = LOCAL_TZ
 
 
 class EventTrigger(FrozenModel):

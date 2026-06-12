@@ -126,4 +126,6 @@ class WorkflowLease(TimestampedDocument):
 
 
 def document_models() -> list[type[Document]]:
-    return [Task, Workflow, Run, Subscription, WorkflowLease]
+    from dailies.profile import UserProfile
+
+    return [Task, Workflow, Run, Subscription, WorkflowLease, UserProfile]

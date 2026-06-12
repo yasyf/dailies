@@ -9,10 +9,18 @@ from dailies.storage import StateStorage
 from dailies.tools.action import ActionReader, ActionRecorder, ActionToolSet
 from dailies.tools.base import Tool, ToolSet, ToolSpec, model_for, tool
 from dailies.tools.inputs import BrowseToolSet, EmailToolSet, WebToolSet
+from dailies.tools.profile import ProfileToolSet
 from dailies.tools.state import StateToolSet
 from dailies.web import WebClient
 
-TOOLSETS: tuple[type[ToolSet], ...] = (StateToolSet, ActionToolSet, EmailToolSet, WebToolSet, BrowseToolSet)
+TOOLSETS: tuple[type[ToolSet], ...] = (
+    StateToolSet,
+    ActionToolSet,
+    EmailToolSet,
+    WebToolSet,
+    BrowseToolSet,
+    ProfileToolSet,
+)
 
 
 def render_catalog() -> str:
@@ -48,5 +56,6 @@ def build_toolsets(
         ActionToolSet(context, gmail, record, recorded),
         EmailToolSet(context, gmail),
         WebToolSet(context, web),
+        ProfileToolSet(),
         *(() if chrome else (BrowseToolSet(context, browser, storage),)),
     )

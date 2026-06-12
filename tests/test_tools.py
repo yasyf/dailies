@@ -9,11 +9,11 @@ from pydantic import ValidationError
 
 from dailies.browser import browser_profile_key
 from dailies.gmail import MAX_BODY, EmailMessage
-from dailies.models import Action, InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId, utcnow
+from dailies.models import Action, Exchange, InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId, utcnow
 from dailies.runtime import RunContext
 from dailies.storage import state_storage
-from dailies.tools import build_toolsets
-from dailies.tools.action import Notification
+from dailies.tools import TOOLSETS, build_toolsets, render_catalog
+from dailies.tools.action import ActionToolSet, Notification
 from dailies.tools.base import StructuredSink, ToolSet, ToolSpec, tool
 from dailies.tools.inputs import BrowseToolSet
 from dailies.web import SearchResult
@@ -74,7 +74,7 @@ class SampleToolSet(ToolSet):
         raise NotImplementedError
 
     @tool
-    async def push(self, note: Notification) -> None:
+    async def push(self, note: Exchange) -> None:
         """Push a notification."""
         raise NotImplementedError
 
@@ -120,7 +120,7 @@ def test_schema_int_defaults_and_required() -> None:
 
 def test_schema_nested_model_uses_ref() -> None:
     schema = schemas()["push"]
-    assert "Notification" in schema["$defs"]
+    assert "Exchange" in schema["$defs"]
     assert "$ref" in str(schema["properties"]["note"])
 
 
@@ -162,11 +162,23 @@ def test_tool_guard_requires_annotations() -> None:
         tool(bad)
 
 
-VALID_ARGS: dict[str, dict] = {
-    "notify": {"notification": {"channel": "c", "title": "t", "body": "b"}},
-    "record_action": {"kind": "k", "payload": {}},
-    "list_actions": {},
-}
+def test_draft_tool_guard_requires_docstring() -> None:
+    async def nodoc(self) -> None:
+        return None
+
+    with pytest.raises(TypeError):
+        tool(draft=True)(nodoc)
+
+
+async def test_draft_stubs_raise_not_implemented() -> None:
+    toolset = next(ts for ts in toolsets(FakeGmail(), []) if isinstance(ts, ActionToolSet))
+    for stub in (
+        toolset.notify(Notification(channel="c", title="t", body="b")),
+        toolset.record_action(kind="k", payload={}),
+        toolset.list_actions(),
+    ):
+        with pytest.raises(NotImplementedError):
+            await stub
 
 
 async def test_structured_sink_captures_validated_model() -> None:
@@ -176,13 +188,6 @@ async def test_structured_sink_captures_validated_model() -> None:
     assert set(spec.input_schema["properties"]) == {"value"}
     await spec.invoke({"value": {"finished": True, "question": None}})
     assert sink.result == InterviewTurn(finished=True, question=None)
-
-
-async def test_every_stub_raises_not_implemented() -> None:
-    sets = toolsets(FakeGmail(), [])
-    for name, args in VALID_ARGS.items():
-        with pytest.raises(NotImplementedError):
-            await spec_named(sets, name).invoke(args)
 
 
 async def test_send_email_records_one_action_after_send() -> None:
@@ -223,6 +228,27 @@ def test_chrome_excludes_browse_toolset() -> None:
     assert "browse" not in tool_names(toolsets(FakeGmail(), [], chrome=True))
     assert "browse" in tool_names(toolsets(FakeGmail(), [], chrome=False))
     assert {"fetch_url", "search_web", "scrape"} <= tool_names(toolsets(FakeGmail(), [], chrome=True))
+
+
+def test_render_catalog_groups_tools_by_toolset() -> None:
+    catalog = render_catalog()
+    assert {"State:", "Action:", "Email:", "Web:", "Browse:"} <= set(catalog.splitlines())
+    assert "- query_state: Run a read-only SQL query against this workflow's state database." in catalog
+    assert "- send_email: Send an email and return the emitted action id." in catalog
+
+
+def test_catalog_stays_in_sync_with_runtime_toolsets() -> None:
+    sets = toolsets(FakeGmail(), [], chrome=False)
+    assert {type(ts) for ts in sets} == set(TOOLSETS)
+    catalog = render_catalog()
+    assert [t.name for ts in sets for t in ts.get_tools() if f"- {t.name}: " not in catalog] == []
+
+
+def test_draft_tools_hidden_from_runtime_and_catalog() -> None:
+    drafts = {"notify", "record_action", "list_actions"}
+    assert not drafts & tool_names(toolsets(FakeGmail(), []))
+    catalog = render_catalog()
+    assert [name for name in drafts if name in catalog] == []
 
 
 async def test_web_tools_delegate_to_clients() -> None:

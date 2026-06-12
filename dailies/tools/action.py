@@ -44,17 +44,17 @@ class ActionToolSet(ToolSet):
         await self.record(action)
         return action.id
 
-    @tool
+    @tool(draft=True)
     async def notify(self, notification: Notification) -> UUID:
         """Send a notification and return the emitted action id."""
         raise NotImplementedError
 
-    @tool
+    @tool(draft=True)
     async def record_action(self, kind: str, payload: dict[str, JsonValue]) -> UUID:
         """Record an action of the given kind and return its id."""
         raise NotImplementedError
 
-    @tool
+    @tool(draft=True)
     async def list_actions(self) -> list[UUID]:
         """Return the ids of actions emitted in the current run."""
         raise NotImplementedError

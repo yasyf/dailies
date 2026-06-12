@@ -4,7 +4,7 @@ import inspect
 from abc import ABC
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, ClassVar, ParamSpec, TypeVar, get_type_hints
+from typing import Any, ClassVar, ParamSpec, TypeVar, get_type_hints, overload
 
 from pydantic import BaseModel, create_model
 
@@ -83,16 +83,35 @@ class StructuredSink[T: BaseModel]:
 class ToolSet(ABC):
     integrations: ClassVar[tuple[str, ...]] = ()
 
+    @overload
     @staticmethod
-    def tool(fn: Callable[P, Coroutine[Any, Any, T]]) -> Callable[P, Coroutine[Any, Any, T]]:
-        qualname = getattr(fn, "__qualname__", "<tool>")
-        if not fn.__doc__:
-            raise TypeError(f"tool {qualname} must have a docstring")
-        hints = get_type_hints(fn)
-        if missing := [param for param in inspect.signature(fn).parameters if param != "self" and param not in hints]:
-            raise TypeError(f"tool {qualname} must annotate parameters: {', '.join(missing)}")
-        setattr(fn, "__tool__", True)
-        return fn
+    def tool(fn: Callable[P, Coroutine[Any, Any, T]]) -> Callable[P, Coroutine[Any, Any, T]]: ...
+    @overload
+    @staticmethod
+    def tool(
+        *, draft: bool
+    ) -> Callable[[Callable[P, Coroutine[Any, Any, T]]], Callable[P, Coroutine[Any, Any, T]]]: ...
+    @staticmethod
+    def tool(
+        fn: Callable[P, Coroutine[Any, Any, T]] | None = None, *, draft: bool = False
+    ) -> (
+        Callable[P, Coroutine[Any, Any, T]]
+        | Callable[[Callable[P, Coroutine[Any, Any, T]]], Callable[P, Coroutine[Any, Any, T]]]
+    ):
+        def decorate(fn: Callable[P, Coroutine[Any, Any, T]]) -> Callable[P, Coroutine[Any, Any, T]]:
+            qualname = getattr(fn, "__qualname__", "<tool>")
+            if not fn.__doc__:
+                raise TypeError(f"tool {qualname} must have a docstring")
+            hints = get_type_hints(fn)
+            if missing := [
+                param for param in inspect.signature(fn).parameters if param != "self" and param not in hints
+            ]:
+                raise TypeError(f"tool {qualname} must annotate parameters: {', '.join(missing)}")
+            setattr(fn, "__tool__", not draft)
+            setattr(fn, "__tool_draft__", draft)
+            return fn
+
+        return decorate if fn is None else decorate(fn)
 
     def get_tools(self) -> list[Tool]:
         return [

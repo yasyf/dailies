@@ -62,9 +62,11 @@ class StateToolSet(ToolSet):
 
     @tool
     async def describe_state(self) -> dict[str, list[str]]:
-        """Return the current state schema as CREATE statements, keyed by database:
-        "main" for this workflow's private tables, "shared" for tables shared
-        across the task's workflows."""
+        """Return the current state schema as CREATE statements, keyed by database.
+
+        "main" holds this workflow's private tables; "shared" holds tables shared
+        across the task's workflows.
+        """
         async with state_session(self.storage, self.context, readonly=True) as db:
             return {
                 schema: [

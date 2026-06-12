@@ -54,6 +54,7 @@ def test_auth_help_lists_integrations_and_status() -> None:
     assert result.exit_code == 0
     assert "gmail" in result.output
     assert "onepassword" in result.output
+    assert "bluebubbles" in result.output
     assert "status" in result.output
 
 
@@ -161,16 +162,21 @@ def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPat
 
 def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
+    monkeypatch.delenv("BLUEBUBBLES_URL", raising=False)
+    monkeypatch.delenv("BLUEBUBBLES_PASSWORD", raising=False)
     result = CliRunner().invoke(main, ["auth", "status"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
     assert "gmail: not ready — run `dly auth gmail` — used by ActionToolSet, EmailToolSet" in lines
     assert "onepassword: not ready — set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)" in lines
+    assert "bluebubbles: not ready — set BLUEBUBBLES_URL and BLUEBUBBLES_PASSWORD (see `dly auth bluebubbles`)" in lines
 
 
 def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, state_dir: Path) -> None:
     monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
     monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
+    monkeypatch.setenv("BLUEBUBBLES_URL", "http://mac.tailnet:1234")
+    monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "hunter2")
     (state_dir / "connections").mkdir(parents=True)
     (state_dir / "connections" / "gmail.json").write_text(
         Connection(connection_id="conn-1", provider_config_key="google-mail").model_dump_json()
@@ -186,6 +192,7 @@ def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, state_dir: Path) -> 
     lines = result.output.splitlines()
     assert "gmail: connected as yasyfm@gmail.com — used by ActionToolSet, EmailToolSet" in lines
     assert "onepassword: ready" in lines
+    assert "bluebubbles: ready" in lines
 
 
 def test_auth_onepassword_unset_prints_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,6 +211,28 @@ def test_auth_onepassword_set_reports_ready(monkeypatch: pytest.MonkeyPatch) -> 
     result = CliRunner().invoke(main, ["auth", "onepassword"])
     assert result.exit_code == 0
     assert result.output == "onepassword: ready\n"
+
+
+def test_auth_bluebubbles_unset_prints_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BLUEBUBBLES_URL", raising=False)
+    monkeypatch.delenv("BLUEBUBBLES_PASSWORD", raising=False)
+    result = CliRunner().invoke(main, ["auth", "bluebubbles"])
+    assert result.exit_code == 1
+    lines = result.output.splitlines()
+    assert "To set up bluebubbles:" in lines
+    hint = "pair a BlueBubbles server on a Mac (e.g. reachable over Tailscale) and copy its URL and password"
+    assert f"  1. {hint}" in lines
+    assert "  2. set BLUEBUBBLES_URL" in lines
+    assert "  3. set BLUEBUBBLES_PASSWORD" in lines
+    assert "Error: bluebubbles is not ready" in result.stderr
+
+
+def test_auth_bluebubbles_set_reports_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BLUEBUBBLES_URL", "http://mac.tailnet:1234")
+    monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "hunter2")
+    result = CliRunner().invoke(main, ["auth", "bluebubbles"])
+    assert result.exit_code == 0
+    assert result.output == "bluebubbles: ready\n"
 
 
 def test_db_init_runs() -> None:

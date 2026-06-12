@@ -16,6 +16,7 @@ pytestmark = pytest.mark.unit
 
 GMAIL = INTEGRATIONS["gmail"]
 ONEPASSWORD = INTEGRATIONS["onepassword"]
+BLUEBUBBLES = INTEGRATIONS["bluebubbles"]
 
 
 def test_registry_entries() -> None:
@@ -24,6 +25,11 @@ def test_registry_entries() -> None:
         name="onepassword",
         env_vars=("OP_SERVICE_ACCOUNT_TOKEN",),
         hint="create a 1Password service account with read access to your vaults and copy its token",
+    )
+    assert BLUEBUBBLES == EnvIntegration(
+        name="bluebubbles",
+        env_vars=("BLUEBUBBLES_URL", "BLUEBUBBLES_PASSWORD"),
+        hint="pair a BlueBubbles server on a Mac (e.g. reachable over Tailscale) and copy its URL and password",
     )
 
 
@@ -47,16 +53,14 @@ async def test_env_unready_when_var_missing(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 async def test_env_requires_every_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    duo = EnvIntegration(name="duo", env_vars=("DUO_URL", "DUO_PASSWORD"), hint="get both from the duo app")
-    monkeypatch.setenv("DUO_URL", "http://localhost")
-    monkeypatch.delenv("DUO_PASSWORD", raising=False)
-    assert await integration_ready(duo) is False
-    monkeypatch.setenv("DUO_PASSWORD", "hunter2")
-    assert await integration_ready(duo) is True
+    monkeypatch.setenv("BLUEBUBBLES_URL", "http://mac.tailnet:1234")
+    monkeypatch.delenv("BLUEBUBBLES_PASSWORD", raising=False)
+    assert await integration_ready(BLUEBUBBLES) is False
+    monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "hunter2")
+    assert await integration_ready(BLUEBUBBLES) is True
 
 
 async def test_unready_fix_strings() -> None:
     assert await unready_fix(GMAIL) == "run `dly auth gmail`"
     assert await unready_fix(ONEPASSWORD) == "set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)"
-    duo = EnvIntegration(name="duo", env_vars=("DUO_URL", "DUO_PASSWORD"), hint="get both from the duo app")
-    assert await unready_fix(duo) == "set DUO_URL and DUO_PASSWORD (see `dly auth duo`)"
+    assert await unready_fix(BLUEBUBBLES) == "set BLUEBUBBLES_URL and BLUEBUBBLES_PASSWORD (see `dly auth bluebubbles`)"

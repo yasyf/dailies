@@ -38,6 +38,11 @@ INTEGRATIONS: dict[str, Integration] = {
         env_vars=("OP_SERVICE_ACCOUNT_TOKEN",),
         hint="create a 1Password service account with read access to your vaults and copy its token",
     ),
+    "bluebubbles": EnvIntegration(
+        name="bluebubbles",
+        env_vars=("BLUEBUBBLES_URL", "BLUEBUBBLES_PASSWORD"),
+        hint="pair a BlueBubbles server on a Mac (e.g. reachable over Tailscale) and copy its URL and password",
+    ),
 }
 
 

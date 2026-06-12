@@ -28,6 +28,7 @@ from dailies.models import (
     WorkflowId,
     WorkflowTrigger,
 )
+from dailies.tools.base import ToolSpec
 from tests.fakes import FakeProvider
 
 pytestmark = pytest.mark.integration
@@ -334,3 +335,29 @@ async def test_record_action_appends_once(mongo: AsyncMongoClient[dict[str, Any]
     reloaded = await Run.get(run.uid)
     assert reloaded is not None
     assert [a.kind for a in reloaded.actions] == ["email"]
+
+
+async def test_action_tools_round_trip_through_engine(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    workflow = make_workflow()
+    await workflow.insert()
+    run = Run(
+        workflow_doc_id=workflow.uid,
+        workflow_id=workflow.workflow_id,
+        task_id=workflow.task_id,
+        fired_by=[Firing(trigger=ManualTrigger())],
+    )
+    await run.insert()
+    sets = Engine(chrome=False).build_toolsets(run)
+
+    def spec(name: str) -> ToolSpec:
+        return next(t.to_spec() for ts in sets for t in ts.get_tools() if t.name == name)
+
+    first = await spec("record_action").invoke({"kind": "demo", "target": "alpha"})
+    second = await spec("record_action").invoke({"kind": "demo", "target": "beta", "payload": {"n": 1}})
+    assert [action.id for action in await spec("list_actions").invoke({})] == [first, second]
+    reloaded = await Run.get(run.uid)
+    assert reloaded is not None
+    assert [(action.id, action.kind, action.target, action.payload) for action in reloaded.actions] == [
+        (first, "demo", "alpha", {}),
+        (second, "demo", "beta", {"n": 1}),
+    ]

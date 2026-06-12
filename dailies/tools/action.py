@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from dailies.gmail import GmailClient
 
 type ActionRecorder = Callable[[Action], Awaitable[None]]
+type ActionReader = Callable[[], Awaitable[list[Action]]]
 
 
 class Notification(FrozenModel):
@@ -31,6 +32,7 @@ class ActionToolSet(ToolSet):
     context: RunContext
     gmail: GmailClient
     record: ActionRecorder
+    recorded: ActionReader
 
     @tool
     async def send_email(self, to: str, subject: str, body: str) -> UUID:
@@ -49,12 +51,24 @@ class ActionToolSet(ToolSet):
         """Send a notification and return the emitted action id."""
         raise NotImplementedError
 
-    @tool(draft=True)
-    async def record_action(self, kind: str, payload: dict[str, JsonValue]) -> UUID:
-        """Record an action of the given kind and return its id."""
-        raise NotImplementedError
+    @tool
+    async def record_action(self, kind: str, target: str, payload: dict[str, JsonValue] | None = None) -> UUID:
+        """Record an action this run performed and return the emitted action id.
 
-    @tool(draft=True)
-    async def list_actions(self) -> list[UUID]:
-        """Return the ids of actions emitted in the current run."""
-        raise NotImplementedError
+        A log entry only — it performs no side effect. Use it after completing
+        work that has no dedicated action tool so the run's history shows what
+        happened: kind is a short category, target names what was acted on, and
+        payload carries any details worth keeping.
+        """
+        action = Action(kind=kind, target=target, payload=payload or {})
+        await self.record(action)
+        return action.id
+
+    @tool
+    async def list_actions(self) -> list[Action]:
+        """Return the actions already recorded in this run.
+
+        Check it before repeating an action (e.g. re-sending an email) to keep
+        a run idempotent.
+        """
+        return await self.recorded()

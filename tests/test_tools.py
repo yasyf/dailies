@@ -36,6 +36,9 @@ def toolsets(
     async def record(action: Action) -> None:
         recorded.append(action)
 
+    async def recorded_actions() -> list[Action]:
+        return recorded
+
     return build_toolsets(
         context(),
         storage=state_storage(),
@@ -44,6 +47,7 @@ def toolsets(
         browser=browser or FakeBrowser(),
         chrome=chrome,
         record=record,
+        recorded=recorded_actions,
     )
 
 
@@ -173,13 +177,8 @@ def test_draft_tool_guard_requires_docstring() -> None:
 
 async def test_draft_stubs_raise_not_implemented() -> None:
     toolset = next(ts for ts in toolsets(FakeGmail(), []) if isinstance(ts, ActionToolSet))
-    for stub in (
-        toolset.notify(Notification(channel="c", title="t", body="b")),
-        toolset.record_action(kind="k", payload={}),
-        toolset.list_actions(),
-    ):
-        with pytest.raises(NotImplementedError):
-            await stub
+    with pytest.raises(NotImplementedError):
+        await toolset.notify(Notification(channel="c", title="t", body="b"))
 
 
 async def test_structured_sink_captures_validated_model() -> None:
@@ -201,6 +200,35 @@ async def test_send_email_records_one_action_after_send() -> None:
     assert [action.id for action in recorded] == [action_id]
     assert (recorded[0].kind, recorded[0].target) == ("email", "a@b.com")
     assert recorded[0].payload == {"subject": "s", "message_id": "sent-0", "thread_id": "sent-thread-0"}
+
+
+async def test_record_action_records_and_returns_id() -> None:
+    recorded: list[Action] = []
+    action_id = await spec_named(toolsets(FakeGmail(), recorded), "record_action").invoke(
+        {"kind": "calendar", "target": "standup", "payload": {"when": "9am"}}
+    )
+    assert [action.id for action in recorded] == [action_id]
+    assert (recorded[0].kind, recorded[0].target, recorded[0].payload) == ("calendar", "standup", {"when": "9am"})
+
+
+async def test_record_action_defaults_empty_payload() -> None:
+    recorded: list[Action] = []
+    await spec_named(toolsets(FakeGmail(), recorded), "record_action").invoke({"kind": "k", "target": "t"})
+    assert recorded[0].payload == {}
+
+
+def test_record_action_schema_requires_kind_and_target() -> None:
+    assert spec_named(toolsets(FakeGmail(), []), "record_action").input_schema["required"] == ["kind", "target"]
+
+
+async def test_list_actions_returns_recorded_actions_in_order() -> None:
+    recorded: list[Action] = []
+    sets = toolsets(FakeGmail(), recorded)
+    first = await spec_named(sets, "send_email").invoke({"to": "a@b.com", "subject": "s", "body": "b"})
+    second = await spec_named(sets, "record_action").invoke({"kind": "demo", "target": "t"})
+    actions = await spec_named(sets, "list_actions").invoke({})
+    assert actions == recorded
+    assert [action.id for action in actions] == [first, second]
 
 
 async def test_get_thread_and_search_truncate_bodies() -> None:
@@ -246,7 +274,7 @@ def test_catalog_stays_in_sync_with_runtime_toolsets() -> None:
 
 
 def test_draft_tools_hidden_from_runtime_and_catalog() -> None:
-    drafts = {"notify", "record_action", "list_actions"}
+    drafts = {"notify"}
     assert not drafts & tool_names(toolsets(FakeGmail(), []))
     catalog = render_catalog()
     assert [name for name in drafts if name in catalog] == []

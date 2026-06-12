@@ -428,6 +428,9 @@ class Engine:
         async def record(action: Action) -> None:
             await self.record_action(run, action)
 
+        async def recorded() -> list[Action]:
+            return run.actions
+
         return tools.build_toolsets(
             RunContext(
                 workflow_id=run.workflow_id,
@@ -441,6 +444,7 @@ class Engine:
             browser=self.browser,
             chrome=self.chrome,
             record=record,
+            recorded=recorded,
         )
 
     async def invoke_agent(self, run: Run) -> None:

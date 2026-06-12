@@ -6,7 +6,7 @@ from dailies.browser import BrowserBackend
 from dailies.gmail import GmailClient
 from dailies.runtime import RunContext
 from dailies.storage import StateStorage
-from dailies.tools.action import ActionRecorder, ActionToolSet
+from dailies.tools.action import ActionReader, ActionRecorder, ActionToolSet
 from dailies.tools.base import Tool, ToolSet, ToolSpec, model_for, tool
 from dailies.tools.inputs import BrowseToolSet, EmailToolSet, WebToolSet
 from dailies.tools.state import StateToolSet
@@ -41,10 +41,11 @@ def build_toolsets(
     browser: BrowserBackend,
     chrome: bool,
     record: ActionRecorder,
+    recorded: ActionReader,
 ) -> tuple[ToolSet, ...]:
     return (
         StateToolSet(context, storage),
-        ActionToolSet(context, gmail, record),
+        ActionToolSet(context, gmail, record, recorded),
         EmailToolSet(context, gmail),
         WebToolSet(context, web),
         *(() if chrome else (BrowseToolSet(context, browser, storage),)),

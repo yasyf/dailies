@@ -4,19 +4,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from dailies.discovery import DISCOVERY_SYSTEM, MiningToolSet, discover_profile, discovery_prompt
 from dailies.gmail import MAX_BODY, EmailMessage
 from dailies.models import LOCAL_TZ
-from dailies.profile import (
-    DISCOVERY_SYSTEM,
-    AccountSource,
-    EmailSource,
-    LoyaltyProgram,
-    MiningToolSet,
-    Profile,
-    Sourced,
-    discover_profile,
-    discovery_prompt,
-)
+from dailies.profile import AccountSource, EmailSource, LoyaltyProgram, Profile, Sourced
 from dailies.tools import TOOLSETS
 from tests.fakes import FakeGmail, FakeWeb, ToolDrivingProvider
 

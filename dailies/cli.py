@@ -23,6 +23,7 @@ from dailies.connections import (
     unready_fix,
 )
 from dailies.db import lifespan
+from dailies.discovery import DISCOVERY_MAX_TURNS, discover_profile
 from dailies.engine import Engine, TriggerFired
 from dailies.gmail import NANGO_API, NangoGmailClient, checked, gmail_client
 from dailies.interface import TextualPresenter, run_tui
@@ -34,7 +35,6 @@ from dailies.profile import (
     Sourced,
     UserSource,
     describe,
-    discover_profile,
     load_profile,
     save_profile,
 )
@@ -44,7 +44,6 @@ from dailies.web import web_client
 
 AUTH_POLL_INTERVAL = 3.0
 AUTH_TIMEOUT = 300.0
-DISCOVERY_MAX_TURNS = 80
 
 PROFILE_SCALARS = ("name", "email", "phone", "imessage_handle", "home_address", "birthday", "employer", "role")
 PARTNER_SCALARS = ("email", "phone", "imessage_handle")

@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import click
 import httpx
@@ -13,13 +14,14 @@ import pytest
 from click.testing import CliRunner
 
 from dailies import cli
+from dailies.activation import ActivationError, Problem
 from dailies.agent import ClaudeAgentSDKProvider
 from dailies.cli import main
 from dailies.connections import Connection, NotConnected
 from dailies.engine import Engine, TriggerFired
 from dailies.gmail import GmailClient
 from dailies.interview import InterviewError
-from dailies.models import Firing, ManualTrigger, WorkflowId
+from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, TaskStatus, WorkflowId
 from dailies.profile import AccountSource, EmailSource, Profile, ProfileNotFound, Sourced, UserSource
 from dailies.web import WebClient
 
@@ -39,7 +41,7 @@ def stub_lifespan(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_help_lists_commands() -> None:
     result = CliRunner().invoke(main, ["--help"])
     assert result.exit_code == 0
-    for command in ("run", "tick", "tui", "interview", "db", "auth", "browser", "profile"):
+    for command in ("run", "tick", "tui", "interview", "db", "auth", "browser", "profile", "tasks", "activate"):
         assert command in result.output
 
 
@@ -481,3 +483,145 @@ def test_tick_invokes_engine_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert len(ticks) == 1
     assert ticks[0].tzinfo is not None
+
+
+@dataclass(frozen=True)
+class StubTask:
+    uid: UUID
+    name: str
+    status: TaskStatus = "draft"
+    gaps: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FakeTasks:
+    documents: tuple[StubTask, ...]
+
+    def find_all(self) -> AsyncIterator[StubTask]:
+        async def iterate() -> AsyncIterator[StubTask]:
+            for document in self.documents:
+                yield document
+
+        return iterate()
+
+    async def get(self, task_id: UUID) -> StubTask | None:
+        return next((document for document in self.documents if document.uid == task_id), None)
+
+
+def patch_activation(
+    monkeypatch: pytest.MonkeyPatch, documents: tuple[StubTask, ...], counts: dict[UUID, int]
+) -> None:
+    async def fake_latest(task_id: TaskId) -> list[object]:
+        return [object()] * counts[task_id]
+
+    monkeypatch.setattr(cli, "Task", FakeTasks(documents))
+    monkeypatch.setattr(cli, "latest_workflows", fake_latest)
+
+
+def patch_activate_task(
+    monkeypatch: pytest.MonkeyPatch, *, result: StubTask | None = None, error: ActivationError | None = None
+) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    async def fake_activate(task_id: TaskId, *, ack_gaps: bool, spend_policy: SpendPolicy | None) -> StubTask:
+        captured.update(task_id=task_id, ack_gaps=ack_gaps, spend_policy=spend_policy)
+        if error is not None:
+            raise error
+        assert result is not None, "activate_task must not succeed in this scenario"
+        return result
+
+    monkeypatch.setattr(cli, "activate_task", fake_activate)
+    return captured
+
+
+def test_tasks_lists_ids_names_status_and_gaps(monkeypatch: pytest.MonkeyPatch) -> None:
+    digest = StubTask(uid=uuid4(), name="Digest", status="active")
+    chaser = StubTask(uid=uuid4(), name="Mileage credit chaser", gaps=("push notifications to a phone",))
+    patch_activation(monkeypatch, (digest, chaser), {digest.uid: 2, chaser.uid: 1})
+    result = CliRunner().invoke(main, ["tasks"])
+    assert result.exit_code == 0
+    assert result.output.splitlines() == [
+        f"{digest.uid}  Digest — active (2 workflows)",
+        f"{chaser.uid}  Mileage credit chaser — draft (1 workflows)",
+        "  gap: push notifications to a phone",
+    ]
+
+
+def test_activate_success_reports_caps_and_next_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    chaser = StubTask(uid=uuid4(), name="Mileage credit chaser")
+    patch_activation(monkeypatch, (chaser,), {chaser.uid: 2})
+    captured = patch_activate_task(monkeypatch, result=chaser)
+    result = CliRunner().invoke(
+        main, ["activate", str(chaser.uid), "--per-order-cap", "2000", "--weekly-cap", "10000"]
+    )
+    assert result.exit_code == 0
+    assert result.output.splitlines() == [
+        'Activated "Mileage credit chaser": 2 workflows live; spend capped at $20.00/order, $100.00/week.',
+        "Next: `dly tick` runs due workflows (or wait for the scheduler).",
+    ]
+    assert captured == {
+        "task_id": chaser.uid,
+        "ack_gaps": False,
+        "spend_policy": SpendPolicy(per_order_cents=2000, weekly_cents=10_000),
+    }
+
+
+def test_activate_without_caps_omits_spend_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
+    chaser = StubTask(uid=uuid4(), name="Mileage credit chaser")
+    patch_activation(monkeypatch, (chaser,), {chaser.uid: 1})
+    captured = patch_activate_task(monkeypatch, result=chaser)
+    result = CliRunner().invoke(main, ["activate", str(chaser.uid), "--ack-gaps"])
+    assert result.exit_code == 0
+    assert result.output.splitlines() == [
+        'Activated "Mileage credit chaser": 1 workflows live',
+        "Next: `dly tick` runs due workflows (or wait for the scheduler).",
+    ]
+    assert captured == {"task_id": chaser.uid, "ack_gaps": True, "spend_policy": None}
+
+
+def test_activate_failure_prints_numbered_problems_and_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    chaser = StubTask(uid=uuid4(), name="Mileage credit chaser")
+    patch_activation(monkeypatch, (chaser,), {})
+    patch_activate_task(
+        monkeypatch,
+        error=ActivationError(
+            [
+                Problem(
+                    detail="unacknowledged gap: push notifications to a phone",
+                    fix="review it, then re-run with --ack-gaps",
+                ),
+                Problem(detail="profile is not seeded", fix="run `dly profile init`"),
+                Problem(
+                    detail="integration onepassword is not ready",
+                    fix="set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)",
+                ),
+            ]
+        ),
+    )
+    result = CliRunner().invoke(main, ["activate", str(chaser.uid)])
+    assert result.exit_code == 1
+    assert result.output.splitlines() == [
+        'Cannot activate "Mileage credit chaser":',
+        "  1. unacknowledged gap: push notifications to a phone",
+        "     fix: review it, then re-run with --ack-gaps",
+        "  2. profile is not seeded",
+        "     fix: run `dly profile init`",
+        "  3. integration onepassword is not ready",
+        "     fix: set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)",
+        "Error: 3 problems block activation",
+    ]
+    assert result.stderr == "Error: 3 problems block activation\n"
+
+
+def test_activate_lone_per_order_cap_is_usage_error() -> None:
+    result = CliRunner().invoke(main, ["activate", str(uuid4()), "--per-order-cap", "2000"])
+    assert result.exit_code == 2
+    assert "--per-order-cap and --weekly-cap must be given together" in result.stderr
+
+
+def test_activate_unknown_task_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_activation(monkeypatch, (), {})
+    unknown = uuid4()
+    result = CliRunner().invoke(main, ["activate", str(unknown)])
+    assert result.exit_code == 1
+    assert f"Error: no task {unknown} — run `dly tasks` to list tasks" in result.stderr

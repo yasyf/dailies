@@ -9,6 +9,7 @@ import anyio
 import click
 import httpx
 
+from dailies.activation import ActivationError, TaskNotFound, activate_task, latest_workflows
 from dailies.agent import ClaudeAgentSDKProvider
 from dailies.browser import COOKIE_BROWSERS, import_cookies
 from dailies.connections import (
@@ -24,11 +25,12 @@ from dailies.connections import (
 )
 from dailies.db import lifespan
 from dailies.discovery import DISCOVERY_MAX_TURNS, discover_profile
+from dailies.documents import Task
 from dailies.engine import Engine, TriggerFired
 from dailies.gmail import NANGO_API, NangoGmailClient, checked, gmail_client
 from dailies.interface import TextualPresenter, run_tui
 from dailies.interview import InterviewError, InterviewRunner
-from dailies.models import Firing, ManualTrigger, Timezone, WorkflowId
+from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, Timezone, WorkflowId
 from dailies.profile import (
     Profile,
     ProfileNotFound,
@@ -451,5 +453,68 @@ def interview() -> None:
             ):
                 await init_profile()
             await run_tui(TextualPresenter(), build_interviewer(), start_interview=True)
+
+    anyio.run(go)
+
+
+@main.command()
+def tasks() -> None:
+    """List every task with its status, workflow count, and open gaps."""
+
+    async def go() -> None:
+        async with lifespan():
+            async for task in Task.find_all():
+                live = len(await latest_workflows(task.uid))
+                click.echo(f"{task.uid}  {task.name} — {task.status} ({live} workflows)")
+                for gap in task.gaps:
+                    click.echo(f"  gap: {gap}")
+
+    anyio.run(go)
+
+
+def dollars(cents: int) -> str:
+    return f"${cents / 100:.2f}"
+
+
+@main.command()
+@click.argument("task_id", type=click.UUID)
+@click.option("--ack-gaps", is_flag=True, help="Acknowledge the task's open gaps and activate anyway.")
+@click.option("--per-order-cap", type=int, default=None, metavar="CENTS", help="Per-order spend cap in cents.")
+@click.option("--weekly-cap", type=int, default=None, metavar="CENTS", help="Weekly spend cap in cents.")
+def activate(task_id: UUID, ack_gaps: bool, per_order_cap: int | None, weekly_cap: int | None) -> None:
+    """Activate TASK_ID once every prerequisite is met.
+
+    A refusal lists every unmet prerequisite at once, each with the exact
+    command that fixes it. The two spend caps must be given together and
+    become the task's spend policy.
+    """
+    if (per_order_cap is None) != (weekly_cap is None):
+        raise click.UsageError("--per-order-cap and --weekly-cap must be given together")
+    policy = (
+        SpendPolicy(per_order_cents=per_order_cap, weekly_cents=weekly_cap)
+        if per_order_cap is not None and weekly_cap is not None
+        else None
+    )
+
+    async def go() -> None:
+        async with lifespan():
+            tid = TaskId(task_id)
+            if (named := await Task.get(tid)) is None:
+                raise click.ClickException(str(TaskNotFound(tid)))
+            try:
+                activated = await activate_task(tid, ack_gaps=ack_gaps, spend_policy=policy)
+            except ActivationError as err:
+                click.echo(f'Cannot activate "{named.name}":')
+                for number, problem in enumerate(err.problems, start=1):
+                    click.echo(f"  {number}. {problem.detail}")
+                    click.echo(f"     fix: {problem.fix}")
+                raise click.ClickException(str(err)) from err
+            capped = (
+                f"; spend capped at {dollars(policy.per_order_cents)}/order, {dollars(policy.weekly_cents)}/week."
+                if policy is not None
+                else ""
+            )
+            click.echo(f'Activated "{activated.name}": {len(await latest_workflows(tid))} workflows live{capped}')
+            click.echo("Next: `dly tick` runs due workflows (or wait for the scheduler).")
 
     anyio.run(go)

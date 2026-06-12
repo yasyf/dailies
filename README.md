@@ -1,6 +1,6 @@
 # dailies
 
-![dailies banner](https://github.com/yasyf/dailies/raw/main/docs/assets/readme-banner.png)
+![dailies banner](https://github.com/yasyf/dailies/raw/main/docs/assets/readme-banner.webp)
 
 [![PyPI](https://img.shields.io/pypi/v/dly.svg)](https://pypi.org/project/dly/)
 [![Python](https://img.shields.io/pypi/pyversions/dly.svg)](https://pypi.org/project/dly/)

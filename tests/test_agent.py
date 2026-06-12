@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
 import pytest
+from loguru import logger
 
 from dailies.agent import AgentProvider, AgentRequest, AgentResult, ClaudeAgentSDKProvider, adapt
 from dailies.models import TaskId, WorkflowId
 from dailies.runtime import RunContext
-from dailies.tools.base import ToolSet, ToolSpec, tool
+from dailies.tools.base import ToolError, ToolSet, ToolSpec, tool
 from dailies.tools.state import QueryResult
 from tests.fakes import FakeProvider
 
@@ -65,7 +67,58 @@ async def test_adapt_dumps_list_of_models_as_json_array() -> None:
 
 async def test_adapt_maps_exception_to_is_error() -> None:
     spec = ToolSpec(name="boom", description="d", input_schema={"type": "object"}, invoke=raises)
-    assert await adapt(spec).handler({}) == {"content": [{"type": "text", "text": "nope"}], "is_error": True}
+    assert await adapt(spec).handler({}) == {
+        "content": [{"type": "text", "text": '{"error_type": "RuntimeError", "detail": "nope"}'}],
+        "is_error": True,
+    }
+
+
+async def test_adapt_maps_validation_error_to_invalid_input() -> None:
+    result = await adapt(add_spec()).handler({"a": "not-int", "b": 2})
+    assert result["is_error"] is True
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["error_type"] == "invalid_input"
+    assert "Input should be a valid integer" in payload["detail"]
+    assert payload["fix"] == "correct the arguments to match the tool schema"
+
+
+async def test_adapt_renders_tool_error_payload() -> None:
+    async def conflicted(args: dict[str, Any]) -> Any:
+        raise ToolError("conflict", "already sent today", fix="check list_actions before re-sending")
+
+    spec = ToolSpec(name="c", description="d", input_schema={"type": "object"}, invoke=conflicted)
+    assert await adapt(spec).handler({}) == {
+        "content": [
+            {
+                "type": "text",
+                "text": '{"error_type": "conflict", "detail": "already sent today",'
+                ' "fix": "check list_actions before re-sending"}',
+            }
+        ],
+        "is_error": True,
+    }
+
+
+async def test_adapt_omits_fix_when_tool_error_has_none() -> None:
+    async def fixless(args: dict[str, Any]) -> Any:
+        raise ToolError("conflict", "already sent today")
+
+    spec = ToolSpec(name="c", description="d", input_schema={"type": "object"}, invoke=fixless)
+    assert await adapt(spec).handler({}) == {
+        "content": [{"type": "text", "text": '{"error_type": "conflict", "detail": "already sent today"}'}],
+        "is_error": True,
+    }
+
+
+async def test_adapt_logs_each_invocation() -> None:
+    messages: list[str] = []
+    handler_id = logger.add(lambda message: messages.append(str(message).strip()), format="{message}")
+    try:
+        await adapt(add_spec()).handler({"a": 1, "b": 2})
+        await adapt(add_spec()).handler({"a": "not-int", "b": 2})
+    finally:
+        logger.remove(handler_id)
+    assert messages == ["tool invoked: tool=add ok=True", "tool invoked: tool=add ok=False"]
 
 
 def test_adapt_preserves_defs_schema() -> None:

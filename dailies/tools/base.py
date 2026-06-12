@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, ClassVar, ParamSpec, TypeVar, get_type_hints, overload
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, ValidationError, create_model
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -22,6 +22,21 @@ def model_for(fn: Callable[..., Any], *, name: str) -> type[BaseModel]:
             if param != "self"
         },
     )
+
+
+class ToolError(Exception):
+    """Model-facing tool failure, rendered as a structured MCP error envelope.
+
+    Raise from a tool body when the failure is actionable by the model:
+    ``error_type`` is a short category, ``detail`` says what went wrong, and
+    ``fix`` (optional) tells the model how to correct the call.
+    """
+
+    def __init__(self, error_type: str, detail: str, *, fix: str | None = None) -> None:
+        super().__init__(detail)
+        self.error_type = error_type
+        self.detail = detail
+        self.fix = fix
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +61,12 @@ class Tool:
         fn = self.fn
 
         async def invoke(args: dict[str, Any]) -> Any:
-            validated = model.model_validate(args)
+            try:
+                validated = model.model_validate(args)
+            except ValidationError as exc:
+                raise ToolError(
+                    "invalid_input", str(exc), fix="correct the arguments to match the tool schema"
+                ) from exc
             return await fn(**{name: getattr(validated, name) for name in model.model_fields})
 
         return ToolSpec(

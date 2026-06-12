@@ -5,7 +5,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
 
 from dailies.browser import browser_profile_key
 from dailies.gmail import MAX_BODY, EmailMessage
@@ -14,7 +13,7 @@ from dailies.runtime import RunContext
 from dailies.storage import state_storage
 from dailies.tools import TOOLSETS, build_toolsets, render_catalog
 from dailies.tools.action import ActionToolSet, Notification
-from dailies.tools.base import StructuredSink, ToolSet, ToolSpec, tool
+from dailies.tools.base import StructuredSink, ToolError, ToolSet, ToolSpec, tool
 from dailies.tools.inputs import BrowseToolSet
 from dailies.web import SearchResult
 from tests.fakes import FakeBrowser, FakeGmail, FakeWeb
@@ -141,8 +140,10 @@ async def test_invoke_validates_then_calls() -> None:
 
 async def test_invoke_rejects_bad_input() -> None:
     spec = AddToolSet(context()).get_tools()[0].to_spec()
-    with pytest.raises(ValidationError):
+    with pytest.raises(ToolError) as excinfo:
         await spec.invoke({"a": "not-int", "b": 3})
+    assert excinfo.value.error_type == "invalid_input"
+    assert excinfo.value.fix == "correct the arguments to match the tool schema"
 
 
 def test_tool_guard_requires_docstring() -> None:

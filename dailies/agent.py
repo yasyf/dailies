@@ -4,7 +4,10 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from loguru import logger
 from pydantic import BaseModel
+
+from dailies.tools.base import ToolError
 
 if TYPE_CHECKING:
     from claude_agent_sdk import SdkMcpTool
@@ -43,6 +46,11 @@ def jsonable(result: object) -> object:
             return result
 
 
+def error_envelope(error_type: str, detail: str, *, fix: str | None = None) -> dict[str, Any]:
+    payload = {"error_type": error_type, "detail": detail} | ({"fix": fix} if fix else {})
+    return {"content": [{"type": "text", "text": json.dumps(payload)}], "is_error": True}
+
+
 def adapt(spec: ToolSpec) -> SdkMcpTool[Any]:
     from claude_agent_sdk import tool
 
@@ -50,9 +58,14 @@ def adapt(spec: ToolSpec) -> SdkMcpTool[Any]:
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
             result = await spec.invoke(args)
+        except ToolError as exc:
+            response = error_envelope(exc.error_type, exc.detail, fix=exc.fix)
         except Exception as exc:  # tool-execution boundary -> MCP is_error envelope
-            return {"content": [{"type": "text", "text": str(exc)}], "is_error": True}
-        return {"content": [{"type": "text", "text": json.dumps(jsonable(result), default=str)}]}
+            response = error_envelope(type(exc).__name__, str(exc))
+        else:
+            response = {"content": [{"type": "text", "text": json.dumps(jsonable(result), default=str)}]}
+        logger.info("tool invoked: tool={} ok={}", spec.name, not response.get("is_error", False))
+        return response
 
     return handler
 

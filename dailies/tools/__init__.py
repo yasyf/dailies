@@ -12,6 +12,7 @@ from dailies.tools.action import ActionReader, ActionRecorder, ActionToolSet
 from dailies.tools.base import Tool, ToolSet, ToolSpec, model_for, tool
 from dailies.tools.inputs import BrowseToolSet, EmailToolSet, WebToolSet
 from dailies.tools.profile import ProfileToolSet
+from dailies.tools.spend import SpendToolSet
 from dailies.tools.state import StateToolSet
 from dailies.tools.vault import VaultToolSet
 from dailies.web import WebClient
@@ -24,6 +25,7 @@ TOOLSETS: tuple[type[ToolSet], ...] = (
     BrowseToolSet,
     ProfileToolSet,
     VaultToolSet,
+    SpendToolSet,
 )
 
 
@@ -64,5 +66,6 @@ def build_toolsets(
         WebToolSet(web),
         ProfileToolSet(),
         VaultToolSet(context, vault),
+        SpendToolSet(context, record),
         *(() if chrome else (BrowseToolSet(context, browser, storage),)),
     )

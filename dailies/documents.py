@@ -15,6 +15,7 @@ from dailies.models import (
     Firing,
     RunStatus,
     SchemaStr,
+    SpendPolicy,
     StatusUpdate,
     StopCondition,
     TaskDefinition,
@@ -49,6 +50,7 @@ class Task(TimestampedDocument):
     status: TaskStatus = "draft"
     summary: str | None = None
     stop_conditions: list[StopCondition] = Field(default_factory=list)
+    spend_policy: SpendPolicy | None = None
 
     @property
     def uid(self) -> TaskId:

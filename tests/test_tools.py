@@ -328,10 +328,15 @@ def test_chrome_excludes_browse_toolset() -> None:
 
 def test_render_catalog_groups_tools_by_toolset() -> None:
     catalog = render_catalog()
-    assert {"State:", "Action:", "Email:", "Web:", "Browse:", "Profile:", "Vault:"} <= set(catalog.splitlines())
+    headers = {"State:", "Action:", "Email:", "Web:", "Browse:", "Profile:", "Vault:", "Spend:"}
+    assert headers <= set(catalog.splitlines())
     assert "- query_state: Run a read-only SQL query against this workflow's state database." in catalog
     assert "- send_email: Send an email and return a receipt with the action, message, and thread ids." in catalog
     assert "- get_login: Fetch a login (username, password, otp) from 1Password by item name." in catalog
+    assert (
+        "- authorize_spend: Authorize spending money against the task's spend policy; "
+        "call it before any purchase."
+    ) in catalog
 
 
 def test_render_catalog_includes_notify_guidance() -> None:

@@ -136,6 +136,11 @@ class Action(StoredModel):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class SpendPolicy(FrozenModel):
+    per_order_cents: int
+    weekly_cents: int
+
+
 class TaskDefinition(FrozenModel):
     user_input: str
     description: str

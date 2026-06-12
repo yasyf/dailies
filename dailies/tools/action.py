@@ -25,6 +25,12 @@ class Notification(FrozenModel):
     body: str
 
 
+class SentReceipt(FrozenModel):
+    action_id: UUID
+    message_id: str
+    thread_id: str
+
+
 @dataclass(frozen=True, slots=True)
 class ActionToolSet(ToolSet):
     integrations: ClassVar[tuple[str, ...]] = ("gmail",)
@@ -35,8 +41,17 @@ class ActionToolSet(ToolSet):
     recorded: ActionReader
 
     @tool
-    async def send_email(self, to: str, subject: str, body: str) -> UUID:
-        """Send an email and return the emitted action id."""
+    async def send_email(self, to: str, subject: str, body: str) -> SentReceipt:
+        """Send an email and return a receipt with the action, message, and thread ids.
+
+        When an action needs the user's approval (it is irreversible, spends
+        unauthorized money, or the rules say confirm first), gate it across
+        runs — never wait for the reply inside a run: send the request, call
+        subscribe_to_thread with the receipt's thread_id, record the pending
+        decision in a state table (what awaits approval and why), and end the
+        run. The user's reply fires a new run, which reads the pending row,
+        interprets the reply, and proceeds or abandons.
+        """
         sent = await self.gmail.send(to=to, subject=subject, body=body)
         action = Action(
             kind="email",
@@ -44,7 +59,7 @@ class ActionToolSet(ToolSet):
             payload={"subject": subject, "message_id": sent.message_id, "thread_id": sent.thread_id},
         )
         await self.record(action)
-        return action.id
+        return SentReceipt(action_id=action.id, message_id=sent.message_id, thread_id=sent.thread_id)
 
     @tool(draft=True)
     async def notify(self, notification: Notification) -> UUID:

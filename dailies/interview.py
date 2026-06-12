@@ -92,7 +92,14 @@ SYNTHESIS_SYSTEM = (
     "never name an outside product or service as the execution mechanism. When the scenario needs a "
     "capability this catalog lacks, do not invent a tool or write a prompt that pretends the capability "
     "exists: name the missing capability in the proposal's gaps list and design the workflows around what "
-    "the catalog can actually do."
+    "the catalog can actually do. "
+    "When a workflow's action is irreversible, spends money the user has not authorized, or is one the "
+    "user asked to confirm first, design it as an email approval gate that spans runs — a run never "
+    "waits for a reply: the workflow sends the request with send_email, calls subscribe_to_thread with "
+    "the receipt's thread_id, records the pending decision in a state table (what awaits approval and "
+    "why), and ends the run; the user's reply fires a new run of the same workflow, which reads the "
+    "pending row, interprets the reply, and proceeds or abandons. Spell this gate out in the prompt and "
+    "rules of any workflow whose actions need approval."
     f"\n\nAvailable tools:\n\n{render_catalog()}"
 )
 

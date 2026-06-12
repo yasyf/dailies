@@ -12,7 +12,7 @@ from dailies.models import Action, Exchange, InterviewTurn, PromptStr, TaskId, T
 from dailies.runtime import RunContext
 from dailies.storage import state_storage
 from dailies.tools import TOOLSETS, build_toolsets, render_catalog
-from dailies.tools.action import ActionToolSet, Notification
+from dailies.tools.action import ActionToolSet, Notification, SentReceipt
 from dailies.tools.base import StructuredSink, ToolError, ToolSet, ToolSpec, tool
 from dailies.tools.inputs import BrowseToolSet
 from dailies.web import SearchResult
@@ -193,11 +193,12 @@ async def test_structured_sink_captures_validated_model() -> None:
 async def test_send_email_records_one_action_after_send() -> None:
     gmail = FakeGmail()
     recorded: list[Action] = []
-    action_id = await spec_named(toolsets(gmail, recorded), "send_email").invoke(
+    receipt = await spec_named(toolsets(gmail, recorded), "send_email").invoke(
         {"to": "a@b.com", "subject": "s", "body": "b"}
     )
     assert [message.to for message in gmail.sent] == ["a@b.com"]
-    assert [action.id for action in recorded] == [action_id]
+    assert [action.id for action in recorded] == [receipt.action_id]
+    assert receipt == SentReceipt(action_id=recorded[0].id, message_id="sent-0", thread_id="sent-thread-0")
     assert (recorded[0].kind, recorded[0].target) == ("email", "a@b.com")
     assert recorded[0].payload == {"subject": "s", "message_id": "sent-0", "thread_id": "sent-thread-0"}
 
@@ -228,7 +229,7 @@ async def test_list_actions_returns_recorded_actions_in_order() -> None:
     second = await spec_named(sets, "record_action").invoke({"kind": "demo", "target": "t"})
     actions = await spec_named(sets, "list_actions").invoke({})
     assert actions == recorded
-    assert [action.id for action in actions] == [first, second]
+    assert [action.id for action in actions] == [first.action_id, second]
 
 
 async def test_get_thread_and_search_truncate_bodies() -> None:
@@ -263,7 +264,7 @@ def test_render_catalog_groups_tools_by_toolset() -> None:
     catalog = render_catalog()
     assert {"State:", "Action:", "Email:", "Web:", "Browse:", "Profile:"} <= set(catalog.splitlines())
     assert "- query_state: Run a read-only SQL query against this workflow's state database." in catalog
-    assert "- send_email: Send an email and return the emitted action id." in catalog
+    assert "- send_email: Send an email and return a receipt with the action, message, and thread ids." in catalog
 
 
 def test_render_catalog_enumerates_profile_fields() -> None:

@@ -80,6 +80,10 @@ def test_synthesis_system_embeds_catalog() -> None:
     assert render_catalog() in SYNTHESIS_SYSTEM
 
 
+def test_synthesis_system_spells_out_the_email_approval_gate() -> None:
+    assert "subscribe_to_thread" in SYNTHESIS_SYSTEM.partition("Available tools:")[0]
+
+
 async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> None:
     provider = ToolScriptedProvider([{"value": PROPOSAL}])
     await InterviewRunner(provider).synthesize(Interview(scenario="email me a digest"))

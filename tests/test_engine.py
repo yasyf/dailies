@@ -10,7 +10,7 @@ from pymongo.errors import DuplicateKeyError
 
 from dailies.agent import AgentResult
 from dailies.documents import Run, Workflow
-from dailies.engine import LOOKBACK, Engine, TriggerFired, system_prompt, workflow_cursor
+from dailies.engine import LOOKBACK, SYSTEM, Engine, TriggerFired, system_prompt, workflow_cursor
 from dailies.models import (
     Action,
     CronExpr,
@@ -59,6 +59,10 @@ def make_workflow(
     if created_at is not None:
         workflow.created_at = created_at
     return workflow
+
+
+def test_system_spells_out_the_email_approval_gate() -> None:
+    assert "subscribe_to_thread" in SYSTEM
 
 
 async def test_dispatch_persists_exactly_one_run(mongo: AsyncMongoClient[dict[str, Any]]) -> None:

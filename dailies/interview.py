@@ -28,6 +28,7 @@ from dailies.models import (
 )
 from dailies.state import apply_ddl, task_db_key, validate_ddl, workflow_db_key
 from dailies.storage import state_storage
+from dailies.tools import render_catalog
 from dailies.tools.base import StructuredSink
 
 TURN_SYSTEM = (
@@ -85,7 +86,14 @@ SYNTHESIS_SYSTEM = (
     "State that several workflows read or write (a counter, a running total) belongs in the task's "
     "shared_ddl, declared exactly once; state used by only one workflow belongs in that workflow's ddl. "
     "A collector's output that a downstream workflow consumes is shared by definition: declare it in "
-    "shared_ddl and have the collector write shared.<table>."
+    "shared_ddl and have the collector write shared.<table>. "
+    "The workflow agent runs with exactly the tools listed below and no others — no MCP servers, no apps, "
+    "no integrations beyond these. Write every workflow prompt in terms of these capabilities only, and "
+    "never name an outside product or service as the execution mechanism. When the scenario needs a "
+    "capability this catalog lacks, do not invent a tool or write a prompt that pretends the capability "
+    "exists: name the missing capability in the proposal's gaps list and design the workflows around what "
+    "the catalog can actually do."
+    f"\n\nAvailable tools:\n\n{render_catalog()}"
 )
 
 

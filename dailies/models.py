@@ -180,6 +180,7 @@ class WorkflowDraft(FrozenModel):
 class TaskProposal(FrozenModel):
     task: TaskDraft
     workflows: list[WorkflowDraft]
+    gaps: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def check_workflow_references(self) -> TaskProposal:

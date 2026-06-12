@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from dailies.interview import InterviewRunner, draft_triggers
+from dailies.interview import SYNTHESIS_SYSTEM, InterviewRunner, draft_triggers
 from dailies.models import (
     CronExpr,
     CronTrigger,
@@ -17,6 +17,7 @@ from dailies.models import (
     WorkflowTriggerDraft,
     new_uuid,
 )
+from dailies.tools import render_catalog
 from tests.fakes import ToolScriptedProvider
 
 pytestmark = pytest.mark.unit
@@ -67,6 +68,16 @@ async def test_synthesize_parses_proposal() -> None:
     assert result.workflows[0].triggers == [
         CronTrigger(cron_expression=CronExpr("0 9 * * *"), timezone="America/New_York")
     ]
+
+
+async def test_synthesize_parses_gaps() -> None:
+    provider = ToolScriptedProvider([{"value": PROPOSAL | {"gaps": ["push notifications to a phone"]}}])
+    result = await InterviewRunner(provider).synthesize(Interview(scenario="email me a digest"))
+    assert result.gaps == ["push notifications to a phone"]
+
+
+def test_synthesis_system_embeds_catalog() -> None:
+    assert render_catalog() in SYNTHESIS_SYSTEM
 
 
 async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> None:

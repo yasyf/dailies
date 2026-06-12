@@ -97,6 +97,8 @@ class ReviewScreen(Screen[None]):
             yield Label(task.name, classes="task-name", markup=False)
             yield Static(task.description, markup=False)
             yield Static(task.prompt, classes="muted", markup=False)
+            if self.proposal.gaps:
+                yield Static("\n".join(f"gap: {gap}" for gap in self.proposal.gaps), classes="muted", markup=False)
             if task.shared_ddl:
                 yield ddl_block(task.shared_ddl)
             for wf in self.proposal.workflows:

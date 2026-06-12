@@ -328,7 +328,16 @@ def test_chrome_excludes_browse_toolset() -> None:
 
 def test_render_catalog_groups_tools_by_toolset() -> None:
     catalog = render_catalog()
-    headers = {"State:", "Action:", "Email:", "Web:", "Browse:", "Profile:", "Vault:", "Spend:"}
+    headers = {
+        "State:",
+        "Action (requires gmail):",
+        "Email (requires gmail):",
+        "Web:",
+        "Browse:",
+        "Profile:",
+        "Vault (requires onepassword):",
+        "Spend:",
+    }
     assert headers <= set(catalog.splitlines())
     assert "- query_state: Run a read-only SQL query against this workflow's state database." in catalog
     assert "- send_email: Send an email and return a receipt with the action, message, and thread ids." in catalog

@@ -47,6 +47,7 @@ class Task(TimestampedDocument):
     name: str
     definition: TaskDefinition
     shared_ddl: SchemaStr | None = None
+    gaps: list[str] = Field(default_factory=list)
     status: TaskStatus = "draft"
     summary: str | None = None
     stop_conditions: list[StopCondition] = Field(default_factory=list)
@@ -68,6 +69,7 @@ class Workflow(TimestampedDocument):
     name: str
     definition: WorkflowDefinition
     ddl: SchemaStr
+    requires: list[str] = Field(default_factory=list)
     status: TaskStatus = "draft"
     triggers: list[Trigger] = Field(default_factory=list)
     stop_conditions: list[StopCondition] = Field(default_factory=list)

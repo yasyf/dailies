@@ -183,6 +183,7 @@ class WorkflowDraft(FrozenModel):
     rules: list[str] = Field(default_factory=list)
     ddl: str
     triggers: Annotated[list[DraftTrigger], Field(min_length=1)]
+    requires: list[str] = Field(default_factory=list)
 
 
 class TaskProposal(FrozenModel):

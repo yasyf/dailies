@@ -29,12 +29,22 @@ TOOLSETS: tuple[type[ToolSet], ...] = (
 )
 
 
+def toolset_header(toolset: type[ToolSet]) -> str:
+    name = toolset.__name__.removesuffix("ToolSet")
+    return f"{name} (requires {', '.join(toolset.integrations)}):" if toolset.integrations else f"{name}:"
+
+
 def render_catalog() -> str:
-    """Render the runtime tool catalog (name: one-line description, grouped by toolset) for prompts."""
+    """Render the runtime tool catalog (name: one-line description, grouped by toolset) for prompts.
+
+    Each toolset header names the integrations the toolset requires, e.g.
+    ``Email (requires gmail):``, so prompts and the activation checker share
+    one tool-to-integration mapping.
+    """
     return "\n\n".join(
         "\n".join(
             [
-                f"{toolset.__name__.removesuffix('ToolSet')}:",
+                toolset_header(toolset),
                 *(
                     f"- {fn.__name__}: {doc.splitlines()[0]}"
                     for fn in vars(toolset).values()

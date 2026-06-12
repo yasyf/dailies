@@ -84,6 +84,11 @@ def test_synthesis_system_spells_out_the_email_approval_gate() -> None:
     assert "subscribe_to_thread" in SYNTHESIS_SYSTEM.partition("Available tools:")[0]
 
 
+def test_synthesis_system_maps_requires_to_catalog_integrations() -> None:
+    prose = SYNTHESIS_SYSTEM.partition("Available tools:")[0]
+    assert "set each workflow's requires to exactly the integration names" in prose
+
+
 async def test_synthesize_returns_structured_data_via_a_single_submit_tool() -> None:
     provider = ToolScriptedProvider([{"value": PROPOSAL}])
     await InterviewRunner(provider).synthesize(Interview(scenario="email me a digest"))

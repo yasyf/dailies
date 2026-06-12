@@ -23,7 +23,12 @@ from dailies.state import task_db_key, workflow_db_key
 pytestmark = pytest.mark.integration
 
 
-def make_proposal(*, ddl: str = "CREATE TABLE sent (day TEXT)") -> TaskProposal:
+def make_proposal(
+    *,
+    ddl: str = "CREATE TABLE sent (day TEXT)",
+    gaps: list[str] | None = None,
+    requires: list[str] | None = None,
+) -> TaskProposal:
     return TaskProposal(
         task=TaskDraft(
             name="Digest",
@@ -40,8 +45,10 @@ def make_proposal(*, ddl: str = "CREATE TABLE sent (day TEXT)") -> TaskProposal:
                 rules=["be brief"],
                 ddl=ddl,
                 triggers=[CronTrigger(cron_expression=CronExpr("0 9 * * *"))],
+                requires=requires or [],
             )
         ],
+        gaps=gaps or [],
     )
 
 
@@ -96,6 +103,27 @@ async def test_persist_proposal_invalid_ddl_persists_nothing(
 ) -> None:
     with pytest.raises(sqlite3.OperationalError):
         await persist_proposal(make_proposal(ddl="CREATE TABEL nope (day TEXT)"), status="draft")
+    assert await Task.find_all().count() == 0
+    assert await Workflow.find_all().count() == 0
+    assert list(state_dir.rglob("*.sqlite")) == []
+
+
+async def test_persist_proposal_lands_gaps_and_requires(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    task = await persist_proposal(
+        make_proposal(gaps=["push notifications to a phone"], requires=["gmail", "onepassword"]), status="draft"
+    )
+    stored = await Task.get(task.uid)
+    assert stored is not None
+    assert stored.gaps == ["push notifications to a phone"]
+    workflows = await Workflow.find(Workflow.task_id == task.uid).to_list()
+    assert [w.requires for w in workflows] == [["gmail", "onepassword"]]
+
+
+async def test_persist_proposal_unknown_requires_persists_nothing(
+    mongo: AsyncMongoClient[dict[str, Any]], state_dir: Path
+) -> None:
+    with pytest.raises(ValueError, match=r"unknown integrations in requires: \['skynet'\]"):
+        await persist_proposal(make_proposal(requires=["gmail", "skynet"]), status="draft")
     assert await Task.find_all().count() == 0
     assert await Workflow.find_all().count() == 0
     assert list(state_dir.rglob("*.sqlite")) == []

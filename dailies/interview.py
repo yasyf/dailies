@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from dailies.agent import AgentProvider, AgentRequest
+from dailies.connections import INTEGRATIONS
 from dailies.documents import Task, Workflow
 from dailies.models import (
     LOCAL_TZ,
@@ -93,6 +94,9 @@ SYNTHESIS_SYSTEM = (
     "capability this catalog lacks, do not invent a tool or write a prompt that pretends the capability "
     "exists: name the missing capability in the proposal's gaps list and design the workflows around what "
     "the catalog can actually do. "
+    "Each toolset in the catalog names the integrations it requires; set each workflow's requires to "
+    "exactly the integration names required by the toolsets its prompt depends on, and leave it empty "
+    "when none. "
     "When a workflow's action is irreversible, spends money the user has not authorized, or is one the "
     "user asked to confirm first, design it as an email approval gate that spans runs — a run never "
     "waits for a reply: the workflow sends the request with send_email, calls subscribe_to_thread with "
@@ -161,10 +165,13 @@ class InterviewRunner:
 async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Task:
     """Persist a reviewed proposal as a Task and its Workflows; Approve and Save differ only by ``status``.
 
-    Validates every DDL, then materializes the per-task and per-workflow state
-    databases, then inserts the documents — so a proposal with bad DDL persists
-    nothing.
+    Validates every workflow's ``requires`` against the integration registry and
+    every DDL, then materializes the per-task and per-workflow state databases,
+    then inserts the documents — so a proposal with an unknown integration or
+    bad DDL persists nothing.
     """
+    if unknown := {name for draft in proposal.workflows for name in draft.requires} - INTEGRATIONS.keys():
+        raise ValueError(f"unknown integrations in requires: {sorted(unknown)}")
     storage = state_storage()
     for ddl in filter(None, [proposal.task.shared_ddl, *(draft.ddl for draft in proposal.workflows)]):
         validate_ddl(SchemaStr(ddl))
@@ -176,6 +183,7 @@ async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Tas
             prompt=PromptStr(proposal.task.prompt),
         ),
         shared_ddl=SchemaStr(proposal.task.shared_ddl) if proposal.task.shared_ddl else None,
+        gaps=proposal.gaps,
         status=status,
     )
     ids = {draft.name: WorkflowId(new_uuid()) for draft in proposal.workflows}
@@ -187,6 +195,7 @@ async def persist_proposal(proposal: TaskProposal, *, status: TaskStatus) -> Tas
             name=draft.name,
             definition=WorkflowDefinition(summary=draft.summary, prompt=PromptStr(draft.prompt), rules=draft.rules),
             ddl=SchemaStr(draft.ddl),
+            requires=draft.requires,
             status=status,
             triggers=draft_triggers(draft, ids=ids),
         )

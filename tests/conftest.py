@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,9 @@ def docker_available() -> bool:
 
 @pytest.fixture(scope="session")
 def mongo_url() -> Iterator[str]:
+    if url := os.environ.get("DAILIES_TEST_MONGO_URL"):
+        yield url
+        return
     if not docker_available():
         pytest.skip("Docker not available")
     from testcontainers.mongodb import MongoDbContainer

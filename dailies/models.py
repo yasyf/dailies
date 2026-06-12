@@ -3,12 +3,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated, Literal, NewType
 from uuid import UUID
+from zoneinfo import available_timezones
 
 import uuid6
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from croniter import croniter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, model_validator
 from tzlocal import get_localzone_name
 
 LOCAL_TZ = get_localzone_name()
+IANA_TIMEZONES = frozenset(available_timezones())
 
 PromptStr = NewType("PromptStr", str)
 SchemaStr = NewType("SchemaStr", str)
@@ -30,6 +33,18 @@ def new_uuid() -> UUID:
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def valid_cron(value: str) -> str:
+    if not croniter.is_valid(value):
+        raise ValueError(f"invalid cron expression: {value}")
+    return value
+
+
+def valid_timezone(value: str) -> str:
+    if value not in IANA_TIMEZONES:
+        raise ValueError(f"unknown IANA timezone: {value}")
+    return value
 
 
 class FrozenModel(BaseModel):
@@ -54,8 +69,8 @@ class StoredModel(BaseModel):
 
 class CronTrigger(FrozenModel):
     kind: Literal["cron"] = "cron"
-    cron_expression: CronExpr
-    timezone: str = LOCAL_TZ
+    cron_expression: Annotated[CronExpr, AfterValidator(valid_cron)]
+    timezone: Annotated[str, AfterValidator(valid_timezone)] = LOCAL_TZ
 
 
 class EventTrigger(FrozenModel):

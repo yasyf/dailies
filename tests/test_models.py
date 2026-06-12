@@ -122,6 +122,42 @@ def test_cron_trigger_timezone_defaults_local() -> None:
     assert CronTrigger(cron_expression=CronExpr("0 9 * * *")).timezone == LOCAL_TZ
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        pytest.param(
+            {"cron_expression": CronExpr("0 9 * * *"), "timezone": "Mars/Olympus_Mons"},
+            "unknown IANA timezone",
+            id="junk-timezone",
+        ),
+        pytest.param({"cron_expression": "not a cron"}, "invalid cron expression", id="junk-cron"),
+    ],
+)
+def test_cron_trigger_rejects_junk_on_construction(kwargs: dict[str, str], match: str) -> None:
+    with pytest.raises(ValidationError, match=match):
+        CronTrigger(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        pytest.param(
+            {"kind": "cron", "cron_expression": "0 9 * * *", "timezone": "Not/AZone"},
+            "unknown IANA timezone",
+            id="junk-timezone",
+        ),
+        pytest.param(
+            {"kind": "cron", "cron_expression": "not a cron", "timezone": "UTC"},
+            "invalid cron expression",
+            id="junk-cron",
+        ),
+    ],
+)
+def test_trigger_union_rejects_junk_cron_payload(payload: dict[str, str], match: str) -> None:
+    with pytest.raises(ValidationError, match=match):
+        trigger_adapter.validate_python(payload)
+
+
 def test_unknown_trigger_kind_rejected() -> None:
     with pytest.raises(ValidationError):
         trigger_adapter.validate_python({"kind": "nope"})

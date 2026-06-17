@@ -32,7 +32,9 @@ class ProfileToolSet(ToolSet):
             profile = await load_profile()
         except ProfileNotFound as exc:
             raise ToolError("profile_missing", str(exc), fix="tell the user to run `dly profile init`") from exc
-        await save_profile(updated := mutate(profile))
+        if (updated := mutate(profile)) is profile:
+            return profile
+        await save_profile(updated)
         return updated
 
     @tool

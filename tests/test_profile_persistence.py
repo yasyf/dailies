@@ -101,11 +101,16 @@ async def test_record_fact_upserts_by_label(mongo: AsyncMongoClient[dict[str, An
 async def test_update_profile_field_respects_sticky_user_source(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     seeded = profile().model_copy(update={"employer": sourced("Acme")})
     await save_profile(seeded)
+    stamped = await UserProfile.get(PROFILE_ID)
+    assert stamped is not None
     result = await ProfileToolSet().update_profile_field(
         field="employer", value="Globex", source=WebSource(url="https://globex.com")
     )
     assert result.employer == sourced("Acme")
     assert await load_profile() == seeded
+    reloaded = await UserProfile.get(PROFILE_ID)
+    assert reloaded is not None
+    assert reloaded.updated_at == stamped.updated_at
 
 
 async def test_write_without_profile_raises_tool_error(mongo: AsyncMongoClient[dict[str, Any]]) -> None:

@@ -7,12 +7,17 @@ from dataclasses import dataclass
 from itertools import takewhile
 from typing import TYPE_CHECKING
 
-from rich.syntax import Syntax
-from rich.table import Table
-from rich.text import Text
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Collapsible, Label, Static, TabbedContent, TabPane
 
+from dailies.interface.console import (
+    RUN_STATUS_STYLES,  # noqa: F401
+    TRIGGER_GLYPHS,
+    ddl_syntax,
+    excerpt,  # noqa: F401
+    run_status_text,  # noqa: F401
+    state_table,
+)
 from dailies.models import (
     Block,
     CronTrigger,
@@ -20,19 +25,16 @@ from dailies.models import (
     Firing,
     ImageBlock,
     ManualTrigger,
-    RunStatus,
     TaskStatus,
     TextBlock,
     Trigger,
     WorkflowTrigger,
     WorkflowTriggerDraft,
 )
-from dailies.state import MAX_ROWS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
-    from pydantic import JsonValue
     from textual.widget import Widget
 
     from dailies.documents import Task, Workflow
@@ -40,7 +42,6 @@ if TYPE_CHECKING:
     from dailies.state import StateDump
 
 ROW_PREVIEW = 5
-CELL_PREVIEW = 40
 CREATE_TABLE = re.compile(
     r"""CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?(?P<table>[\w.]+)["'`\]]?\s*\((?P<body>.*)\)""",
     re.IGNORECASE | re.DOTALL,
@@ -63,14 +64,6 @@ CONSTRAINT_STARTERS = frozenset(
         "ON",
     }
 )
-TRIGGER_GLYPHS: Mapping[str, str] = {"cron": "⏰", "event": "⚡", "manual": "✋", "workflow": "⛓"}
-RUN_STATUS_STYLES: Mapping[RunStatus, str] = {
-    "pending": "dim",
-    "running": "yellow",
-    "succeeded": "green",
-    "failed": "bold red",
-    "stopped": "dim",
-}
 
 
 def split_columns(body: str) -> list[str]:
@@ -181,20 +174,8 @@ def render_firing(firing: Firing) -> str:
             return f"{render_trigger(trigger)} ({len(ids)} msgs)"
 
 
-def excerpt(text: str, *, limit: int = 160) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
 def status_badge(status: TaskStatus) -> Label:
     return Label(status, classes=f"badge {status}")
-
-
-def run_status_text(status: RunStatus) -> Text:
-    return Text(status, style=RUN_STATUS_STYLES[status])
-
-
-def ddl_syntax(ddl: str) -> Syntax:
-    return Syntax(ddl, "sql", background_color="default", word_wrap=True)
 
 
 def ddl_block(ddl: str) -> Collapsible:
@@ -244,20 +225,6 @@ def workflow_box(card: WorkflowCard) -> Vertical:
         title=card.name if card.version is None else f"{card.name} v{card.version}",
         classes="flow-box workflow" if card.status is None else f"flow-box workflow {card.status}",
     )
-
-
-def state_table(name: str, rows: Sequence[Mapping[str, JsonValue]], *, limit: int | None = None) -> Table | Text:
-    if not rows:
-        return Text(f"{name} (no rows)", style="dim")
-    shown = rows if limit is None else rows[:limit]
-    hidden = len(rows) - len(shown)
-    over_cap = "+" if len(rows) >= MAX_ROWS else ""
-    table = Table(*rows[0], title=name, caption=f"… +{hidden}{over_cap} more" if hidden else None)
-    for row in shown:
-        table.add_row(
-            *(repr(value) if limit is None else excerpt(repr(value), limit=CELL_PREVIEW) for value in row.values())
-        )
-    return table
 
 
 def column_lines(columns: tuple[ColumnDef, ...]) -> str:

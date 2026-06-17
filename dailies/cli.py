@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import get_args
+from typing import TYPE_CHECKING, get_args
 from uuid import UUID, uuid4
 
 import anyio
 import click
 import httpx
+from rich.console import Group
+from rich.text import Text
 
 from dailies.activation import ActivationError, TaskNotFound, activate_task, latest_workflows
 from dailies.agent import ClaudeAgentSDKProvider
@@ -32,7 +34,7 @@ from dailies.documents import Task
 from dailies.engine import Engine, TriggerFired
 from dailies.gmail import NANGO_API, NangoGmailClient, checked, gmail_client
 from dailies.interface import TextualPresenter, run_tui
-from dailies.interface.console import Glyphs, confirm, console, step, success
+from dailies.interface.console import Glyphs, KvRow, confirm, console, kv_table, panel, status, step, success
 from dailies.interface.profile_view import MiningDashboard, profile_panel
 from dailies.interview import InterviewError, InterviewRunner
 from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, Timezone, WorkflowId
@@ -50,12 +52,25 @@ from dailies.storage import state_storage
 from dailies.tools import TOOLSETS
 from dailies.web import web_client
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from rich.panel import Panel
+
+    from dailies.models import TaskStatus
+
 AUTH_POLL_INTERVAL = 3.0
 AUTH_TIMEOUT = 300.0
 
 PROFILE_SCALARS = get_args(ProfileScalar.__value__)
 PARTNER_SCALARS = ("email", "phone", "imessage_handle")
 PROFILE_FIELDS = (*PROFILE_SCALARS, "timezone", *(f"partner.{sub}" for sub in PARTNER_SCALARS))
+TASK_STATUS_STYLES: Mapping[TaskStatus, str] = {"draft": "muted", "active": "success", "inactive": "warning"}
+TASK_STATUS_GLYPHS: Mapping[TaskStatus, str] = {
+    "draft": Glyphs.PENDING,
+    "active": Glyphs.SUCCESS,
+    "inactive": Glyphs.WARN,
+}
 
 
 @click.group()
@@ -72,10 +87,13 @@ def db() -> None:
 @db.command("init")
 def db_init() -> None:
     """Connect to MongoDB and initialise beanie indexes."""
+    con = console()
 
     async def go() -> None:
-        async with lifespan():
-            click.echo("Database initialised.")
+        with status(con, "Connecting to MongoDB and building indexes…"):
+            async with lifespan():
+                pass
+        con.print(success("Database initialised."))
 
     anyio.run(go)
 
@@ -115,6 +133,7 @@ async def await_connection(
 
 
 async def connect_integration(integration: NangoIntegration) -> None:
+    con = console()
     headers = {"Authorization": f"Bearer {os.environ['NANGO_SECRET_KEY']}"}
     end_user_id = f"dly-{uuid4().hex}"
     async with httpx.AsyncClient(base_url=NANGO_API, headers=headers) as client:
@@ -127,22 +146,29 @@ async def connect_integration(integration: NangoIntegration) -> None:
                 },
             )
         ).json()
-        click.echo(f"Complete the connection in your browser: {(link := session['data']['connect_link'])}")
+        con.print(
+            step(
+                f"Complete the connection in your browser: {(link := session['data']['connect_link'])}",
+                glyph=Glyphs.WEB,
+            )
+        )
         click.launch(link)
-        credential = await await_connection(client, end_user_id=end_user_id, integration=integration)
+        with status(con, f"Waiting for the {integration.name} connection…"):
+            credential = await await_connection(client, end_user_id=end_user_id, integration=integration)
     await credential_store().save(integration.name, credential)
-    click.echo(f"Authenticated {await account_email(integration)}")
+    con.print(success(f"Authenticated {await account_email(integration)}"))
 
 
 async def auth_wizard(integration: WizardIntegration) -> None:
-    click.echo(integration.hint)
+    con = console()
+    con.print(step(integration.hint))
     values = {field.key: click.prompt(field.prompt, hide_input=field.secret) for field in integration.fields}
     await credential_store().save(integration.name, WizardCredential(values=values))
     if integration.name == "bluebubbles" and not await imessage_client().ping():
         raise click.ClickException(
             "could not reach the bluebubbles server — check the URL and password and run `dly auth bluebubbles` again"
         )
-    click.echo(f"{integration.name}: configured")
+    con.print(success(f"{integration.name}: configured"))
 
 
 @main.group()
@@ -179,23 +205,35 @@ for integration in INTEGRATIONS.values():
     auth.add_command(auth_command(integration))
 
 
-@auth.command()
-def status() -> None:
+async def status_row(name: str, integration: Integration) -> KvRow:
+    users = ", ".join(sorted(ts.__name__ for ts in TOOLSETS if name in ts.integrations))
+    note = f"used by {users}" if users else None
+    if not await integration_ready(integration):
+        return KvRow(
+            label=name,
+            value=f"not ready — {await unready_fix(integration)}",
+            note=note,
+            value_style="warning",
+            glyph=Glyphs.ERROR,
+        )
+    match integration:
+        case NangoIntegration() as nango:
+            value = f"connected as {await account_email(nango)}"
+        case WizardIntegration():
+            value = "configured"
+    return KvRow(label=name, value=value, note=note, value_style="success", glyph=Glyphs.SUCCESS)
+
+
+@auth.command("status")
+def auth_status() -> None:
     """Show each integration's readiness, account, and dependent toolsets."""
+    con = console()
 
     async def go() -> None:
         async with lifespan():
-            for name, integration in INTEGRATIONS.items():
-                users = ", ".join(sorted(ts.__name__ for ts in TOOLSETS if name in ts.integrations))
-                suffix = f" — used by {users}" if users else ""
-                if not await integration_ready(integration):
-                    click.echo(f"{name}: not ready — {await unready_fix(integration)}{suffix}")
-                    continue
-                match integration:
-                    case NangoIntegration() as nango:
-                        click.echo(f"{name}: connected as {await account_email(nango)}{suffix}")
-                    case WizardIntegration():
-                        click.echo(f"{name}: configured{suffix}")
+            with status(con, "Checking integrations…"):
+                rows = [await status_row(name, integration) for name, integration in INTEGRATIONS.items()]
+        con.print(kv_table(rows))
 
     anyio.run(go)
 
@@ -313,6 +351,8 @@ def profile_edit(field: str, value: str) -> None:
     partner.email; lists are re-mined via `dly profile init --force`.
     """
 
+    con = console()
+
     async def go() -> None:
         async with lifespan():
             try:
@@ -320,7 +360,7 @@ def profile_edit(field: str, value: str) -> None:
             except ProfileNotFound as exc:
                 raise click.ClickException(str(exc)) from exc
             await save_profile(edit_field(saved, field, value))
-            click.echo(f"{field} = {value}")
+            con.print(success(f"{field} = {value}"))
 
     anyio.run(go)
 
@@ -356,11 +396,18 @@ def import_cookies_cmd(workflow_id: UUID, domains: tuple[str, ...], from_browser
     browser/<workflow_id>.json in the state store.
     """
 
+    con = console()
+
     async def go() -> None:
-        count = await import_cookies(
-            state_storage(), WorkflowId(workflow_id), domains=domains, source_browser=from_browser, from_file=from_file
-        )
-        click.echo(f"Imported {count} cookies into workflow {workflow_id}")
+        with status(con, f"Importing cookies into workflow {workflow_id}…"):
+            count = await import_cookies(
+                state_storage(),
+                WorkflowId(workflow_id),
+                domains=domains,
+                source_browser=from_browser,
+                from_file=from_file,
+            )
+        con.print(success(f"Imported {count} cookies into workflow {workflow_id}"))
 
     anyio.run(go)
 
@@ -369,10 +416,13 @@ def import_cookies_cmd(workflow_id: UUID, domains: tuple[str, ...], from_browser
 @click.argument("workflow_id", type=click.UUID)
 def run(workflow_id: UUID) -> None:
     """Fire a single manual run of the workflow with the given id."""
+    con = console()
 
     async def go() -> None:
-        async with lifespan():
-            await Engine().dispatch(TriggerFired(WorkflowId(workflow_id), [Firing(trigger=ManualTrigger())]))
+        with status(con, f"Dispatching a manual run of workflow {workflow_id}…"):
+            async with lifespan():
+                await Engine().dispatch(TriggerFired(WorkflowId(workflow_id), [Firing(trigger=ManualTrigger())]))
+        con.print(success(f"Dispatched a manual run of workflow {workflow_id}."))
 
     anyio.run(go)
 
@@ -387,9 +437,13 @@ def tick() -> None:
     a ~1-minute cadence.
     """
 
+    con = console()
+
     async def go() -> None:
-        async with lifespan():
-            await Engine().tick(now=datetime.now(UTC))
+        with status(con, "Sweeping cron-due workflows and polling subscriptions…"):
+            async with lifespan():
+                runs = await Engine().tick(now=datetime.now(UTC))
+        con.print(success(f"Swept {len(runs)} run{'s' if len(runs) != 1 else ''}."))
 
     anyio.run(go)
 
@@ -424,23 +478,50 @@ def interview() -> None:
     anyio.run(go)
 
 
+def task_line(task: Task, live: int) -> Text:
+    return Text.assemble(
+        (f"{TASK_STATUS_GLYPHS[task.status]} ", TASK_STATUS_STYLES[task.status]),
+        (f"{task.uid}  {task.name} — ", "foreground"),
+        (task.status, TASK_STATUS_STYLES[task.status]),
+        (f" ({live} workflow{'s' if live != 1 else ''})", "muted"),
+    )
+
+
 @main.command()
 def tasks() -> None:
     """List every task with its status, workflow count, and open gaps."""
+    con = console()
 
     async def go() -> None:
         async with lifespan():
             async for task in Task.find_all():
-                live = len(await latest_workflows(task.uid))
-                click.echo(f"{task.uid}  {task.name} — {task.status} ({live} workflow{'s' if live != 1 else ''})")
+                con.print(task_line(task, len(await latest_workflows(task.uid))))
                 for gap in task.gaps:
-                    click.echo(f"  gap: {gap}")
+                    con.print(Text(f"  {Glyphs.WARN} {gap}", style="warning"))
 
     anyio.run(go)
 
 
 def dollars(cents: int) -> str:
     return f"${cents / 100:.2f}"
+
+
+def activation_panel(name: str, err: ActivationError) -> Panel:
+    return panel(
+        Group(
+            *(
+                renderable
+                for number, problem in enumerate(err.problems, start=1)
+                for renderable in (
+                    Text.assemble((f"{number}. ", "error"), (problem.detail, "foreground")),
+                    Text(f"   fix: {problem.fix}", style="muted"),
+                )
+            )
+        ),
+        title=f'Cannot activate "{name}"',
+        glyph=Glyphs.ERROR,
+        style="error",
+    )
 
 
 @main.command()
@@ -462,6 +543,7 @@ def activate(task_id: UUID, ack_gaps: bool, per_order_cap: int | None, weekly_ca
         if per_order_cap is not None and weekly_cap is not None
         else None
     )
+    con = console()
 
     async def go() -> None:
         async with lifespan():
@@ -471,10 +553,7 @@ def activate(task_id: UUID, ack_gaps: bool, per_order_cap: int | None, weekly_ca
             try:
                 activated = await activate_task(tid, ack_gaps=ack_gaps, spend_policy=policy)
             except ActivationError as err:
-                click.echo(f'Cannot activate "{named.name}":')
-                for number, problem in enumerate(err.problems, start=1):
-                    click.echo(f"  {number}. {problem.detail}")
-                    click.echo(f"     fix: {problem.fix}")
+                con.print(activation_panel(named.name, err))
                 raise click.ClickException(str(err)) from err
             capped = (
                 f"; spend capped at {dollars(policy.per_order_cents)}/order, {dollars(policy.weekly_cents)}/week."
@@ -482,7 +561,7 @@ def activate(task_id: UUID, ack_gaps: bool, per_order_cap: int | None, weekly_ca
                 else ""
             )
             live = len(await latest_workflows(tid))
-            click.echo(f'Activated "{activated.name}": {live} workflow{"s" if live != 1 else ""} live{capped}')
-            click.echo("Next: `dly tick` runs due workflows (or wait for the scheduler).")
+            con.print(success(f'Activated "{activated.name}": {live} workflow{"s" if live != 1 else ""} live{capped}'))
+            con.print(step("Next: `dly tick` runs due workflows (or wait for the scheduler)."))
 
     anyio.run(go)

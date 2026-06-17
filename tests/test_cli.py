@@ -171,9 +171,11 @@ def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
     result = CliRunner().invoke(main, ["auth", "status"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
-    assert "gmail: not ready — run `dly auth gmail` — used by ActionToolSet, EmailToolSet" in lines
-    assert "onepassword: not ready — run `dly auth onepassword` — used by VaultToolSet" in lines
-    assert "bluebubbles: not ready — run `dly auth bluebubbles`" in lines
+    assert "✗ gmail: not ready — run `dly auth gmail`" in lines
+    assert "✗ onepassword: not ready — run `dly auth onepassword`" in lines
+    assert "✗ bluebubbles: not ready — run `dly auth bluebubbles`" in lines
+    assert "  used by ActionToolSet, EmailToolSet" in lines
+    assert "  used by VaultToolSet" in lines
 
 
 def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, nango_env: None) -> None:
@@ -197,9 +199,11 @@ def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, nango_env: None) -> 
     result = CliRunner().invoke(main, ["auth", "status"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
-    assert "gmail: connected as yasyfm@gmail.com — used by ActionToolSet, EmailToolSet" in lines
-    assert "onepassword: configured — used by VaultToolSet" in lines
-    assert "bluebubbles: configured" in lines
+    assert "✅ gmail: connected as yasyfm@gmail.com" in lines
+    assert "✅ onepassword: configured" in lines
+    assert "✅ bluebubbles: configured" in lines
+    assert "  used by ActionToolSet, EmailToolSet" in lines
+    assert "  used by VaultToolSet" in lines
 
 
 def test_auth_onepassword_wizard_stores_credential(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -446,6 +450,7 @@ def test_profile_edit_sets_user_source(monkeypatch: pytest.MonkeyPatch) -> None:
     result = CliRunner().invoke(main, ["profile", "edit", "phone", "+1 415 555 0100"])
     assert result.exit_code == 0
     assert saved == [DISCOVERED.model_copy(update={"phone": sourced("+1 415 555 0100")})]
+    assert "phone = +1 415 555 0100" in result.output
 
 
 def test_profile_edit_partner_subfield(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -477,6 +482,7 @@ def test_run_dispatches_one_manual_firing(monkeypatch: pytest.MonkeyPatch) -> No
     result = CliRunner().invoke(main, ["run", str(workflow_id)])
     assert result.exit_code == 0
     assert seen == [TriggerFired(WorkflowId(workflow_id), [Firing(trigger=ManualTrigger())])]
+    assert f"Dispatched a manual run of workflow {workflow_id}." in result.output
 
 
 def test_run_propagates_engine_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -506,6 +512,7 @@ def test_tick_invokes_engine_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert len(ticks) == 1
     assert ticks[0].tzinfo is not None
+    assert "Swept 0 runs." in result.output
 
 
 @dataclass(frozen=True)
@@ -564,9 +571,9 @@ def test_tasks_lists_ids_names_status_and_gaps(monkeypatch: pytest.MonkeyPatch) 
     result = CliRunner().invoke(main, ["tasks"])
     assert result.exit_code == 0
     assert result.output.splitlines() == [
-        f"{digest.uid}  Digest — active (2 workflows)",
-        f"{chaser.uid}  Mileage credit chaser — draft (1 workflow)",
-        "  gap: push notifications to a phone",
+        f"✅ {digest.uid}  Digest — active (2 workflows)",
+        f"◦ {chaser.uid}  Mileage credit chaser — draft (1 workflow)",
+        "  ⚠ push notifications to a phone",
     ]
 
 
@@ -579,8 +586,8 @@ def test_activate_success_reports_caps_and_next_step(monkeypatch: pytest.MonkeyP
     )
     assert result.exit_code == 0
     assert result.output.splitlines() == [
-        'Activated "Mileage credit chaser": 2 workflows live; spend capped at $20.00/order, $100.00/week.',
-        "Next: `dly tick` runs due workflows (or wait for the scheduler).",
+        '✅ Activated "Mileage credit chaser": 2 workflows live; spend capped at $20.00/order, $100.00/week.',
+        "• Next: `dly tick` runs due workflows (or wait for the scheduler).",
     ]
     assert captured == {
         "task_id": chaser.uid,
@@ -596,8 +603,8 @@ def test_activate_without_caps_omits_spend_suffix(monkeypatch: pytest.MonkeyPatc
     result = CliRunner().invoke(main, ["activate", str(chaser.uid), "--ack-gaps"])
     assert result.exit_code == 0
     assert result.output.splitlines() == [
-        'Activated "Mileage credit chaser": 1 workflow live',
-        "Next: `dly tick` runs due workflows (or wait for the scheduler).",
+        '✅ Activated "Mileage credit chaser": 1 workflow live',
+        "• Next: `dly tick` runs due workflows (or wait for the scheduler).",
     ]
     assert captured == {"task_id": chaser.uid, "ack_gaps": True, "spend_policy": None}
 
@@ -623,16 +630,14 @@ def test_activate_failure_prints_numbered_problems_and_exits_1(monkeypatch: pyte
     )
     result = CliRunner().invoke(main, ["activate", str(chaser.uid)])
     assert result.exit_code == 1
-    assert result.output.splitlines() == [
-        'Cannot activate "Mileage credit chaser":',
-        "  1. unacknowledged gap: push notifications to a phone",
-        "     fix: review it, then re-run with --ack-gaps",
-        "  2. profile is not seeded",
-        "     fix: run `dly profile init`",
-        "  3. integration onepassword is not ready",
-        "     fix: run `dly auth onepassword`",
-        "Error: 3 problems block activation",
-    ]
+    output = result.output
+    assert 'Cannot activate "Mileage credit chaser"' in output
+    assert "1. unacknowledged gap: push notifications to a phone" in output
+    assert "fix: review it, then re-run with --ack-gaps" in output
+    assert "2. profile is not seeded" in output
+    assert "fix: run `dly profile init`" in output
+    assert "3. integration onepassword is not ready" in output
+    assert "fix: run `dly auth onepassword`" in output
     assert result.stderr == "Error: 3 problems block activation\n"
 
 

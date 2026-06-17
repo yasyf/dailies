@@ -22,9 +22,10 @@ from dailies.engine import Engine, TriggerFired
 from dailies.gmail import GmailClient, NangoGmailClient
 from dailies.interview import InterviewError
 from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, TaskStatus, WorkflowId
-from dailies.profile import AccountSource, EmailSource, Profile, ProfileNotFound, Sourced, UserSource
+from dailies.profile import AccountSource, EmailSource, Profile, ProfileNotFound, Sourced
 from dailies.refresh import REFRESH_TASK_ID
 from dailies.web import WebClient
+from tests.factories import sourced
 from tests.fakes import FakeCredentialStore, FakeIMessage
 
 pytestmark = pytest.mark.unit
@@ -116,8 +117,7 @@ def mock_clients(monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Reque
     )
 
 
-def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
+def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPatch, nango_env: None) -> None:
     monkeypatch.setattr(cli, "AUTH_POLL_INTERVAL", 0.0)
     store = FakeCredentialStore()
     monkeypatch.setattr(cli, "credential_store", lambda: store)
@@ -176,8 +176,7 @@ def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "bluebubbles: not ready — run `dly auth bluebubbles`" in lines
 
 
-def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
+def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, nango_env: None) -> None:
     store = FakeCredentialStore(
         credentials={
             "gmail": NangoCredential(connection_id="conn-1", provider_config_key="google-mail"),
@@ -258,10 +257,6 @@ def test_tui_invokes_run_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     result = CliRunner().invoke(main, ["tui"])
     assert result.exit_code == 0
     assert calls == [{}]
-
-
-def user_sourced(value: str) -> Sourced[str]:
-    return Sourced[str](value=value, source=UserSource())
 
 
 DISCOVERED = Profile(
@@ -391,12 +386,12 @@ def test_profile_init_refuses_existing_without_force(monkeypatch: pytest.MonkeyP
 
 
 def test_profile_init_force_keeps_existing_values_discovery_missed(monkeypatch: pytest.MonkeyPatch) -> None:
-    existing = DISCOVERED.model_copy(update={"phone": user_sourced("+1 415 555 0100")})
-    rediscovered = DISCOVERED.model_copy(update={"home_address": user_sourced("123 Mission St")})
+    existing = DISCOVERED.model_copy(update={"phone": sourced("+1 415 555 0100")})
+    rediscovered = DISCOVERED.model_copy(update={"home_address": sourced("123 Mission St")})
     saved, _ = patch_profile_io(monkeypatch, existing=existing, discovered=rediscovered)
     result = CliRunner().invoke(main, ["profile", "init", "--force"], input="y\n")
     assert result.exit_code == 0
-    assert saved == [rediscovered.model_copy(update={"phone": user_sourced("+1 415 555 0100")})]
+    assert saved == [rediscovered.model_copy(update={"phone": sourced("+1 415 555 0100")})]
 
 
 def test_profile_init_not_connected_names_auth_fix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -444,14 +439,14 @@ def test_profile_edit_sets_user_source(monkeypatch: pytest.MonkeyPatch) -> None:
     saved, _ = patch_profile_io(monkeypatch, existing=DISCOVERED)
     result = CliRunner().invoke(main, ["profile", "edit", "phone", "+1 415 555 0100"])
     assert result.exit_code == 0
-    assert saved == [DISCOVERED.model_copy(update={"phone": user_sourced("+1 415 555 0100")})]
+    assert saved == [DISCOVERED.model_copy(update={"phone": sourced("+1 415 555 0100")})]
 
 
 def test_profile_edit_partner_subfield(monkeypatch: pytest.MonkeyPatch) -> None:
     saved, _ = patch_profile_io(monkeypatch, existing=DISCOVERED)
     result = CliRunner().invoke(main, ["profile", "edit", "partner.email", "rebecca@example.com"])
     assert result.exit_code == 0
-    partner = DISCOVERED.partner.model_copy(update={"email": user_sourced("rebecca@example.com")})
+    partner = DISCOVERED.partner.model_copy(update={"email": sourced("rebecca@example.com")})
     assert saved == [DISCOVERED.model_copy(update={"partner": partner})]
 
 

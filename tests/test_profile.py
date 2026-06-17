@@ -21,12 +21,9 @@ from dailies.profile import (
     merge_fact,
     merge_field,
 )
+from tests.factories import sourced
 
 pytestmark = pytest.mark.unit
-
-
-def sourced(value: str) -> Sourced[str]:
-    return Sourced[str](value=value, source=UserSource())
 
 
 def discovered(value: str, *, confidence: Confidence = "high") -> Sourced[str]:

@@ -24,12 +24,9 @@ from dailies.profile import (
 )
 from dailies.tools.base import ToolError, ToolSpec
 from dailies.tools.profile import ProfileToolSet
+from tests.factories import sourced
 
 pytestmark = pytest.mark.integration
-
-
-def sourced(value: str) -> Sourced[str]:
-    return Sourced[str](value=value, source=UserSource())
 
 
 def profile(name: str = "Yasyf") -> Profile:

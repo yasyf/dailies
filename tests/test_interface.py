@@ -4,7 +4,6 @@ import inspect
 import sqlite3
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from pymongo import AsyncMongoClient
@@ -16,50 +15,31 @@ from dailies.models import (
     Action,
     Firing,
     ManualTrigger,
-    PromptStr,
     SchemaStr,
     StatusUpdate,
-    TaskDefinition,
     TaskId,
-    WorkflowDefinition,
-    WorkflowId,
 )
 from dailies.state import apply_ddl, task_db_key, workflow_db_key
 from dailies.storage import state_storage
+from tests.factories import make_run, make_task, make_workflow
 
 pytestmark = pytest.mark.integration
 
 
-async def make_task(name: str) -> Task:
-    task = await Task(
-        name=name,
-        definition=TaskDefinition(user_input="u", description="d", prompt=PromptStr("p")),
-        shared_ddl=SchemaStr("CREATE TABLE shared (k TEXT)"),
-    ).insert()
+async def provision_task(name: str) -> Task:
+    task = await make_task(name=name, shared_ddl=SchemaStr("CREATE TABLE shared (k TEXT)")).insert()
     await apply_ddl(state_storage(), task_db_key(task.uid), task.shared_ddl)
     return task
 
 
-async def make_workflow(task_id: TaskId) -> Workflow:
-    workflow = await Workflow(
-        task_id=task_id,
-        workflow_id=WorkflowId(uuid4()),
-        version=1,
-        name="w",
-        definition=WorkflowDefinition(summary="s", prompt=PromptStr("p")),
-        ddl=SchemaStr("CREATE TABLE t (id TEXT)"),
-    ).insert()
-    await apply_ddl(state_storage(), workflow_db_key(workflow.workflow_id), workflow.ddl)
-    return workflow
+async def provision_workflow(task_id: TaskId) -> Workflow:
+    wf = await make_workflow(task_id=task_id, status="draft").insert()
+    await apply_ddl(state_storage(), workflow_db_key(wf.workflow_id), wf.ddl)
+    return wf
 
 
-async def make_run(workflow: Workflow) -> Run:
-    return await Run(
-        workflow_doc_id=workflow.uid,
-        workflow_id=workflow.workflow_id,
-        task_id=workflow.task_id,
-        fired_by=[Firing(trigger=ManualTrigger())],
-    ).insert()
+async def provision_run(workflow: Workflow) -> Run:
+    return await make_run(workflow).insert()
 
 
 def test_textual_presenter_is_a_presenter() -> None:
@@ -84,8 +64,8 @@ def test_presenter_methods_are_coroutines(name: str) -> None:
 
 
 async def test_read_methods_roundtrip(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
-    task = await make_task("t")
-    workflow = await make_workflow(task.uid)
+    task = await provision_task("t")
+    workflow = await provision_workflow(task.uid)
     run = Run(
         workflow_doc_id=workflow.uid,
         workflow_id=workflow.workflow_id,
@@ -108,14 +88,14 @@ async def test_read_methods_roundtrip(mongo: AsyncMongoClient[dict[str, Any]]) -
 
 
 async def test_delete_task_cascades(mongo: AsyncMongoClient[dict[str, Any]], state_dir: Path) -> None:
-    a = await make_task("a")
-    a_workflows = [await make_workflow(a.uid), await make_workflow(a.uid)]
+    a = await provision_task("a")
+    a_workflows = [await provision_workflow(a.uid), await provision_workflow(a.uid)]
     for workflow in a_workflows:
-        await make_run(workflow)
+        await provision_run(workflow)
 
-    b = await make_task("b")
-    b_workflow = await make_workflow(b.uid)
-    await make_run(b_workflow)
+    b = await provision_task("b")
+    b_workflow = await provision_workflow(b.uid)
+    await provision_run(b_workflow)
 
     presenter = TextualPresenter()
     assert await presenter.blast_radius(a.uid) == BlastRadius(workflows=2, runs=2)
@@ -136,8 +116,8 @@ async def test_delete_task_cascades(mongo: AsyncMongoClient[dict[str, Any]], sta
 
 
 async def test_get_state_dumps_live_tables(mongo: AsyncMongoClient[dict[str, Any]], state_dir: Path) -> None:
-    task = await make_task("t")
-    workflow = await make_workflow(task.uid)
+    task = await provision_task("t")
+    workflow = await provision_workflow(task.uid)
 
     db = sqlite3.connect(state_dir / workflow_db_key(workflow.workflow_id))
     with db:

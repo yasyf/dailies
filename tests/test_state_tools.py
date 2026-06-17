@@ -5,24 +5,15 @@ from uuid import uuid4
 
 import pytest
 
-from dailies.models import SchemaStr, TaskId, WorkflowId
-from dailies.runtime import RunContext
+from dailies.models import SchemaStr, TaskId
 from dailies.state import MAX_ROWS, apply_ddl, state_session, task_db_key, workflow_db_key
 from dailies.storage import StateStorage, state_storage
 from dailies.tools.state import ExecuteResult, StateToolSet
+from tests.factories import make_context
 
 pytestmark = pytest.mark.unit
 
 ITEMS_DDL = "CREATE TABLE items (name TEXT, qty INTEGER)"
-
-
-def make_context(task_id: TaskId | None = None) -> RunContext:
-    return RunContext(
-        workflow_id=WorkflowId(uuid4()),
-        workflow_doc_id=uuid4(),
-        task_id=task_id or TaskId(uuid4()),
-        run_id=uuid4(),
-    )
 
 
 async def make_tools(

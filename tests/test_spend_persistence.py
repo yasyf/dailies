@@ -12,30 +12,19 @@ from dailies.models import (
     Action,
     Firing,
     ManualTrigger,
-    PromptStr,
     SpendPolicy,
-    TaskDefinition,
     TaskId,
-    Timezone,
     WorkflowId,
 )
-from dailies.profile import Profile, Sourced, UserSource, save_profile
 from dailies.runtime import RunContext
 from dailies.spend import weekly_spent_cents
 from dailies.tools.base import ToolError, ToolSpec
 from dailies.tools.spend import SpendToolSet
+from tests.factories import make_task, seed_profile
 
 pytestmark = pytest.mark.integration
 
 WEEK = datetime(2026, 6, 8, 0, 0, tzinfo=UTC)
-
-
-def make_task(policy: SpendPolicy | None) -> Task:
-    return Task(
-        name="errands",
-        definition=TaskDefinition(user_input="i", description="d", prompt=PromptStr("p")),
-        spend_policy=policy,
-    )
 
 
 def make_run(task_id: TaskId, actions: list[Action]) -> Run:
@@ -57,19 +46,6 @@ def spend(amount_cents: int, *, created_at: datetime) -> Action:
     )
 
 
-async def seed_profile(timezone: Timezone = "UTC") -> None:
-    def sourced(value: str) -> Sourced[str]:
-        return Sourced[str](value=value, source=UserSource())
-
-    await save_profile(
-        Profile(
-            name=sourced("Yasyf"),
-            email=sourced("yasyf@example.com"),
-            timezone=Sourced[Timezone](value=timezone, source=UserSource()),
-        )
-    )
-
-
 def authorize_spend_spec(task_id: TaskId, recorded: list[Action]) -> ToolSpec:
     async def record(action: Action) -> None:
         recorded.append(action)
@@ -81,7 +57,7 @@ def authorize_spend_spec(task_id: TaskId, recorded: list[Action]) -> ToolSpec:
 async def test_weekly_spent_cents_counts_only_this_tasks_spend_inside_window(
     mongo: AsyncMongoClient[dict[str, Any]],
 ) -> None:
-    task = make_task(SpendPolicy(per_order_cents=1000, weekly_cents=5000))
+    task = make_task(spend_policy=SpendPolicy(per_order_cents=1000, weekly_cents=5000))
     await task.insert()
     await make_run(
         task.uid,
@@ -101,7 +77,7 @@ async def test_authorize_spend_denied_raises_tool_error_and_records_nothing(
     mongo: AsyncMongoClient[dict[str, Any]],
 ) -> None:
     await seed_profile()
-    task = make_task(None)
+    task = make_task(spend_policy=None)
     await task.insert()
     recorded: list[Action] = []
     with pytest.raises(ToolError) as excinfo:
@@ -120,8 +96,8 @@ async def test_authorize_spend_denied_raises_tool_error_and_records_nothing(
 
 
 async def test_authorize_spend_approval_records_the_ledger_action(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
-    await seed_profile("America/Los_Angeles")
-    task = make_task(SpendPolicy(per_order_cents=2000, weekly_cents=10_000))
+    await seed_profile(timezone="America/Los_Angeles")
+    task = make_task(spend_policy=SpendPolicy(per_order_cents=2000, weekly_cents=10_000))
     await task.insert()
     recorded: list[Action] = []
     action_id = await authorize_spend_spec(task.uid, recorded).invoke(
@@ -133,8 +109,8 @@ async def test_authorize_spend_approval_records_the_ledger_action(mongo: AsyncMo
 
 
 async def test_spend_policy_round_trips_through_bson(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
-    capped = make_task(SpendPolicy(per_order_cents=2500, weekly_cents=10_000))
-    uncapped = make_task(None)
+    capped = make_task(spend_policy=SpendPolicy(per_order_cents=2500, weekly_cents=10_000))
+    uncapped = make_task(spend_policy=None)
     await capped.insert()
     await uncapped.insert()
     reloaded_capped = await Task.get(capped.uid)

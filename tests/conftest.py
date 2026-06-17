@@ -24,6 +24,11 @@ def state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return state_root
 
 
+@pytest.fixture
+def nango_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
+
+
 def docker_available() -> bool:
     try:
         import docker

@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import anyio
 from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
@@ -92,6 +93,38 @@ class ToolDrivingProvider:
         specs = {spec.name: spec for spec in request.tools}
         self.outputs.extend([await specs[name].invoke(args) for name, args in self.script])
         return AgentResult(text="", ok=True)
+
+
+@dataclass(frozen=True, slots=True)
+class SlowProvider:
+    delay: float
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        await anyio.sleep(self.delay)
+        return AgentResult("done", ok=True)
+
+
+@dataclass(frozen=True, slots=True)
+class BlockingProvider:
+    started: anyio.Event
+    release: anyio.Event
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        self.started.set()
+        await self.release.wait()
+        return AgentResult("done", ok=True)
+
+
+@dataclass(frozen=True, slots=True)
+class InjectingProvider:
+    """Provider that lands a new matching message while the run executes."""
+
+    gmail: FakeGmail
+    message: GmailMessage
+
+    async def run(self, request: AgentRequest) -> AgentResult:
+        self.gmail.add(self.message)
+        return AgentResult("done", ok=True)
 
 
 @dataclass(frozen=True, slots=True)

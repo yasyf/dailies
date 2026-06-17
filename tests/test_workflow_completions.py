@@ -2,69 +2,30 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from pymongo import AsyncMongoClient
 
-from dailies.agent import AgentResult
 from dailies.documents import Run, Subscription, Workflow
-from dailies.engine import Engine
 from dailies.gmail import EmailMessage
 from dailies.models import (
     EventTrigger,
     Firing,
-    ManualTrigger,
-    PromptStr,
     RunStatus,
-    SchemaStr,
-    TaskId,
-    Trigger,
-    WorkflowDefinition,
     WorkflowId,
     WorkflowTrigger,
     utcnow,
 )
-from dailies.storage import state_storage
-from tests.fakes import FakeGmail, FakeProvider
+from tests.factories import engine, future, make_run, make_workflow
+from tests.fakes import FakeGmail
 
 pytestmark = pytest.mark.integration
 
 QUERY_TRIGGER = EventTrigger(source="gmail", event="query", key="alice@")
 
 
-def make_workflow(
-    *,
-    task_id: TaskId | None = None,
-    workflow_id: WorkflowId | None = None,
-    version: int = 1,
-    name: str = "wf",
-    triggers: list[Trigger] | None = None,
-) -> Workflow:
-    return Workflow(
-        task_id=task_id or TaskId(uuid4()),
-        workflow_id=workflow_id or WorkflowId(uuid4()),
-        version=version,
-        name=name,
-        definition=WorkflowDefinition(summary="s", prompt=PromptStr("p")),
-        ddl=SchemaStr("CREATE TABLE t (id TEXT)"),
-        status="active",
-        triggers=triggers or [],
-    )
-
-
 def completion_trigger(upstream: Workflow) -> WorkflowTrigger:
     return WorkflowTrigger(workflow_id=upstream.workflow_id)
-
-
-def engine(gmail: FakeGmail | None = None, *, ok: bool = True) -> Engine:
-    return Engine(
-        provider=FakeProvider(AgentResult("done", ok=ok)), storage=state_storage(), gmail=gmail or FakeGmail()
-    )
-
-
-def future(seconds: int) -> datetime:
-    return (utcnow() + timedelta(seconds=seconds)).replace(microsecond=0)
 
 
 def minutes_ahead(minutes: int) -> datetime:
@@ -72,14 +33,7 @@ def minutes_ahead(minutes: int) -> datetime:
 
 
 async def completed_run(upstream: Workflow, *, finished_at: datetime | None, status: RunStatus = "succeeded") -> Run:
-    run = Run(
-        workflow_doc_id=upstream.uid,
-        workflow_id=upstream.workflow_id,
-        task_id=upstream.task_id,
-        fired_by=[Firing(trigger=ManualTrigger())],
-        status=status,
-        finished_at=finished_at,
-    )
+    run = make_run(upstream, status=status, finished_at=finished_at)
     await run.insert()
     return run
 

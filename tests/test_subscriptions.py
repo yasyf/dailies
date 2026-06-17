@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -8,26 +7,21 @@ from uuid import uuid4
 import pytest
 from pymongo import AsyncMongoClient
 
-from dailies.agent import AgentRequest, AgentResult
+from dailies.agent import AgentResult
 from dailies.documents import Run, Subscription, Workflow
 from dailies.engine import Engine
-from dailies.gmail import EmailMessage, ThreadNotFound
+from dailies.gmail import ThreadNotFound
 from dailies.models import (
     EventTrigger,
     Firing,
-    PromptStr,
-    SchemaStr,
-    TaskId,
-    TaskStatus,
-    Trigger,
-    WorkflowDefinition,
     WorkflowId,
     utcnow,
 )
 from dailies.runtime import RunContext
 from dailies.storage import state_storage
 from dailies.tools.inputs import EmailToolSet, SubscriptionInfo, SubscriptionNotFound, SubscriptionUpdate
-from tests.fakes import FakeGmail, FakeProvider, ScriptedProvider
+from tests.factories import email, engine, future, make_workflow
+from tests.fakes import FakeGmail, InjectingProvider, ScriptedProvider
 
 pytestmark = pytest.mark.integration
 
@@ -35,41 +29,6 @@ QUERY_TRIGGER = EventTrigger(source="gmail", event="query", key="alice@")
 THREAD_TRIGGER = EventTrigger(source="gmail", event="thread", key="t-watch")
 WATCHES = [("thread", "t1"), ("query", "alice@")]
 WATCH_IDS = ["thread", "query"]
-
-
-def make_workflow(
-    *,
-    workflow_id: WorkflowId | None = None,
-    version: int = 1,
-    status: TaskStatus = "active",
-    triggers: list[Trigger] | None = None,
-) -> Workflow:
-    return Workflow(
-        task_id=TaskId(uuid4()),
-        workflow_id=workflow_id or WorkflowId(uuid4()),
-        version=version,
-        name="wf",
-        definition=WorkflowDefinition(summary="s", prompt=PromptStr("p")),
-        ddl=SchemaStr("CREATE TABLE t (id TEXT)"),
-        status=status,
-        triggers=triggers or [],
-    )
-
-
-def email(message_id: str, *, date: datetime, thread_id: str = "t1", sender: str = "alice@example.com") -> EmailMessage:
-    return EmailMessage(
-        id=message_id,
-        thread_id=thread_id,
-        sender=sender,
-        to="me@example.com",
-        subject="subj",
-        body="hello",
-        date=date,
-    )
-
-
-def engine(gmail: FakeGmail, *, ok: bool = True) -> Engine:
-    return Engine(provider=FakeProvider(AgentResult("done", ok=ok)), storage=state_storage(), gmail=gmail)
 
 
 def email_tools(workflow: Workflow, gmail: FakeGmail) -> EmailToolSet:
@@ -83,10 +42,6 @@ def email_tools(workflow: Workflow, gmail: FakeGmail) -> EmailToolSet:
 
 def floor_ms(moment: datetime) -> datetime:
     return moment.replace(microsecond=moment.microsecond // 1000 * 1000)
-
-
-def future(seconds: int) -> datetime:
-    return (utcnow() + timedelta(seconds=seconds)).replace(microsecond=0)
 
 
 def past(seconds: int = 3_600) -> datetime:
@@ -141,18 +96,6 @@ async def unsubscribe(tools: EmailToolSet, event: str, key: str) -> None:
             await tools.unsubscribe_from_query(key)
         case _:
             raise AssertionError(event)
-
-
-@dataclass(frozen=True, slots=True)
-class InjectingProvider:
-    """Provider that lands a new matching message while the run executes."""
-
-    gmail: FakeGmail
-    message: EmailMessage
-
-    async def run(self, request: AgentRequest) -> AgentResult:
-        self.gmail.add(self.message)
-        return AgentResult("done", ok=True)
 
 
 @pytest.mark.parametrize(("event", "key"), WATCHES, ids=WATCH_IDS)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -14,62 +14,21 @@ import dailies.engine as engine_mod
 from dailies.agent import AgentRequest, AgentResult
 from dailies.documents import Run, Subscription, Workflow, WorkflowLease
 from dailies.engine import Engine, TriggerFired, claim_lease, extend_lease, release_lease
-from dailies.gmail import EmailMessage
 from dailies.models import (
     CronExpr,
     CronTrigger,
     EventTrigger,
-    PromptStr,
-    SchemaStr,
-    TaskId,
-    Trigger,
-    WorkflowDefinition,
     WorkflowId,
     new_uuid,
     utcnow,
 )
 from dailies.storage import state_storage
-from tests.fakes import FakeGmail, FakeProvider
+from tests.factories import email, engine, future, make_workflow
+from tests.fakes import BlockingProvider, FakeGmail, SlowProvider
 
 pytestmark = pytest.mark.integration
 
 QUERY_TRIGGER = EventTrigger(source="gmail", event="query", key="alice@")
-
-
-def make_workflow(*, triggers: list[Trigger] | None = None, created_at: datetime | None = None) -> Workflow:
-    return Workflow(
-        task_id=TaskId(uuid4()),
-        workflow_id=WorkflowId(uuid4()),
-        version=1,
-        name="wf",
-        definition=WorkflowDefinition(summary="s", prompt=PromptStr("p")),
-        ddl=SchemaStr("CREATE TABLE t (id TEXT)"),
-        status="active",
-        triggers=triggers or [],
-        **({"created_at": created_at} if created_at else {}),
-    )
-
-
-def engine(gmail: FakeGmail | None = None, *, ok: bool = True) -> Engine:
-    return Engine(
-        provider=FakeProvider(AgentResult("done", ok=ok)), storage=state_storage(), gmail=gmail or FakeGmail()
-    )
-
-
-def email(message_id: str, *, date: datetime) -> EmailMessage:
-    return EmailMessage(
-        id=message_id,
-        thread_id="t1",
-        sender="alice@example.com",
-        to="me@example.com",
-        subject="subj",
-        body="hello",
-        date=date,
-    )
-
-
-def future(seconds: int) -> datetime:
-    return (utcnow() + timedelta(seconds=seconds)).replace(microsecond=0)
 
 
 async def subscription_for(workflow: Workflow) -> Subscription:
@@ -81,26 +40,6 @@ async def expire_lease(workflow_id: WorkflowId) -> None:
     await WorkflowLease.find_one(WorkflowLease.workflow_id == workflow_id).update(
         Set({WorkflowLease.expires_at: utcnow() - timedelta(seconds=1)})
     )
-
-
-@dataclass(frozen=True, slots=True)
-class SlowProvider:
-    delay: float
-
-    async def run(self, request: AgentRequest) -> AgentResult:
-        await anyio.sleep(self.delay)
-        return AgentResult("done", ok=True)
-
-
-@dataclass(frozen=True, slots=True)
-class BlockingProvider:
-    started: anyio.Event
-    release: anyio.Event
-
-    async def run(self, request: AgentRequest) -> AgentResult:
-        self.started.set()
-        await self.release.wait()
-        return AgentResult("done", ok=True)
 
 
 @dataclass(frozen=True, slots=True)

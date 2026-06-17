@@ -17,17 +17,9 @@ from dailies.state import (
     workflow_db_key,
 )
 from dailies.storage import StateStorage, state_storage
+from tests.factories import make_context
 
 pytestmark = pytest.mark.unit
-
-
-def make_context(task_id: TaskId | None = None) -> RunContext:
-    return RunContext(
-        workflow_id=WorkflowId(uuid4()),
-        workflow_doc_id=uuid4(),
-        task_id=task_id or TaskId(uuid4()),
-        run_id=uuid4(),
-    )
 
 
 async def provision(

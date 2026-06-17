@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 
 from dailies.browser import browser_profile_key
-from dailies.gmail import MAX_BODY, EmailMessage
-from dailies.models import Action, Exchange, InterviewTurn, PromptStr, TaskId, Trigger, WorkflowId, utcnow
+from dailies.gmail import MAX_BODY
+from dailies.models import Action, Exchange, InterviewTurn, PromptStr, Trigger
 from dailies.onepassword import Login
 from dailies.runtime import RunContext
 from dailies.storage import state_storage
@@ -18,13 +17,10 @@ from dailies.tools.base import StructuredSink, ToolError, ToolSet, ToolSpec, too
 from dailies.tools.inputs import BrowseToolSet
 from dailies.tools.profile import ProfileToolSet
 from dailies.web import SearchResult
+from tests.factories import email, make_context
 from tests.fakes import FakeBrowser, FakeGmail, FakeIMessage, FakeVault, FakeWeb
 
 pytestmark = pytest.mark.unit
-
-
-def context() -> RunContext:
-    return RunContext(workflow_id=WorkflowId(uuid4()), workflow_doc_id=uuid4(), task_id=TaskId(uuid4()), run_id=uuid4())
 
 
 def toolsets(
@@ -44,7 +40,7 @@ def toolsets(
         return recorded
 
     return build_toolsets(
-        context(),
+        make_context(),
         storage=state_storage(),
         gmail=gmail,
         imessage=imessage or FakeIMessage(),
@@ -59,18 +55,6 @@ def toolsets(
 
 def spec_named(sets: tuple[ToolSet, ...], name: str) -> ToolSpec:
     return next(t.to_spec() for ts in sets for t in ts.get_tools() if t.name == name)
-
-
-def email(message_id: str, *, body: str = "hello") -> EmailMessage:
-    return EmailMessage(
-        id=message_id,
-        thread_id="t1",
-        sender="a@example.com",
-        to="me@example.com",
-        subject="subj",
-        body=body,
-        date=utcnow(),
-    )
 
 
 class SampleToolSet(ToolSet):
@@ -124,11 +108,11 @@ class GhostToolSet(ToolSet):
 
 
 def schemas() -> dict[str, dict]:
-    return {t.name: t.to_spec().input_schema for t in SampleToolSet(context()).get_tools()}
+    return {t.name: t.to_spec().input_schema for t in SampleToolSet(make_context()).get_tools()}
 
 
 def test_get_tools_finds_only_decorated_methods() -> None:
-    names = {t.name for t in SampleToolSet(context()).get_tools()}
+    names = {t.name for t in SampleToolSet(make_context()).get_tools()}
     assert names == {"calc", "push", "fire", "echo"}
 
 
@@ -156,12 +140,12 @@ def test_schema_discriminated_union_has_discriminator() -> None:
 
 
 async def test_invoke_validates_then_calls() -> None:
-    spec = AddToolSet(context()).get_tools()[0].to_spec()
+    spec = AddToolSet(make_context()).get_tools()[0].to_spec()
     assert await spec.invoke({"a": 2, "b": 3}) == 5
 
 
 async def test_invoke_rejects_bad_input() -> None:
-    spec = AddToolSet(context()).get_tools()[0].to_spec()
+    spec = AddToolSet(make_context()).get_tools()[0].to_spec()
     with pytest.raises(ToolError) as excinfo:
         await spec.invoke({"a": "not-int", "b": 3})
     assert excinfo.value.error_type == "invalid_input"
@@ -426,7 +410,7 @@ def test_web_tool_schemas_require_args() -> None:
 
 
 async def test_browse_leases_workflow_profile() -> None:
-    ctx = context()
+    ctx = make_context()
     browser = FakeBrowser(result="ok")
     toolset = BrowseToolSet(ctx, browser, state_storage())
     spec = next(t.to_spec() for t in toolset.get_tools() if t.name == "browse")

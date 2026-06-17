@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import pytest
 
+from dailies import connections
 from dailies.connections import (
     INTEGRATIONS,
-    Connection,
     EnvIntegration,
+    NangoCredential,
     NangoIntegration,
-    connection_store,
     integration_ready,
     unready_fix,
 )
+from tests.fakes import FakeCredentialStore
 
 pytestmark = pytest.mark.unit
 
@@ -33,12 +34,16 @@ def test_registry_entries() -> None:
     )
 
 
-async def test_nango_unready_without_connection() -> None:
+async def test_nango_unready_without_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(connections, "credential_store", lambda: FakeCredentialStore())
     assert await integration_ready(GMAIL) is False
 
 
-async def test_nango_ready_with_stored_connection() -> None:
-    await connection_store().store("gmail", Connection(connection_id="conn-1", provider_config_key="google-mail"))
+async def test_nango_ready_with_stored_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FakeCredentialStore(
+        credentials={"gmail": NangoCredential(connection_id="conn-1", provider_config_key="google-mail")}
+    )
+    monkeypatch.setattr(connections, "credential_store", lambda: store)
     assert await integration_ready(GMAIL) is True
 
 

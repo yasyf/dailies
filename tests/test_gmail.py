@@ -4,13 +4,12 @@ import json
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 from email import message_from_bytes, policy
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from dailies.connections import Connection, NotConnected, StateConnectionStore, connection_store
+from dailies.connections import NangoCredential, NotConnected
 from dailies.gmail import (
     MAX_BODY,
     EmailMessage,
@@ -22,12 +21,12 @@ from dailies.gmail import (
     parse_message,
     truncate,
 )
-from tests.fakes import FakeConnectionStore
+from tests.fakes import FakeCredentialStore
 
 pytestmark = pytest.mark.unit
 
 PROXY_PREFIX = "/proxy/gmail/v1/users/me"
-CONNECTION = Connection(connection_id="conn-1", provider_config_key="google-mail")
+CREDENTIAL = NangoCredential(connection_id="conn-1", provider_config_key="google-mail")
 HEADERS = [
     {"name": "From", "value": "alice@example.com"},
     {"name": "To", "value": "bob@example.com"},
@@ -70,21 +69,8 @@ def proxied(routes: dict[str, Any]) -> tuple[NangoGmailClient, list[httpx.Reques
             return httpx.Response(404, json={"error": {"code": 404, "message": "Not Found"}})
         return httpx.Response(200, json=route)
 
-    store = FakeConnectionStore(connections={"gmail": CONNECTION})
-    return NangoGmailClient(store=store, transport=httpx.MockTransport(handler)), requests
-
-
-async def test_state_connection_store_round_trip(state_dir: Path) -> None:
-    store = connection_store()
-    assert isinstance(store, StateConnectionStore)
-    await store.store("gmail", CONNECTION)
-    assert (state_dir / "connections" / "gmail.json").is_file()
-    assert await store.load("gmail") == CONNECTION
-
-
-async def test_load_missing_connection_points_at_dly_auth() -> None:
-    with pytest.raises(NotConnected, match="dly auth gmail"):
-        await connection_store().load("gmail")
+    store = FakeCredentialStore(credentials={"gmail": CREDENTIAL})
+    return NangoGmailClient(credentials=store, transport=httpx.MockTransport(handler)), requests
 
 
 RENDER_CASES = {
@@ -273,8 +259,8 @@ async def test_query_metas_paginates_via_next_page_token() -> None:
             case path, _:
                 return httpx.Response(200, json=gets[path])
 
-    store = FakeConnectionStore(connections={"gmail": CONNECTION})
-    client = NangoGmailClient(store=store, transport=httpx.MockTransport(handler))
+    store = FakeCredentialStore(credentials={"gmail": CREDENTIAL})
+    client = NangoGmailClient(credentials=store, transport=httpx.MockTransport(handler))
     metas = await client.query_metas("from:carol", after=after)
     assert metas == [
         MessageMeta(id="p1-new", thread_id="t1", date=after + timedelta(milliseconds=100)),
@@ -328,8 +314,8 @@ async def test_missing_thread_raises_thread_not_found() -> None:
 
 
 async def test_non_404_thread_errors_propagate() -> None:
-    store = FakeConnectionStore(connections={"gmail": CONNECTION})
-    client = NangoGmailClient(store=store, transport=httpx.MockTransport(lambda _: httpx.Response(500)))
+    store = FakeCredentialStore(credentials={"gmail": CREDENTIAL})
+    client = NangoGmailClient(credentials=store, transport=httpx.MockTransport(lambda _: httpx.Response(500)))
     with pytest.raises(httpx.HTTPStatusError):
         await client.thread("t1")
 
@@ -341,7 +327,9 @@ async def test_profile_returns_connected_address() -> None:
 
 
 async def test_unconnected_store_raises_not_connected() -> None:
-    client = NangoGmailClient(store=FakeConnectionStore(), transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+    client = NangoGmailClient(
+        credentials=FakeCredentialStore(), transport=httpx.MockTransport(lambda _: httpx.Response(200))
+    )
     with pytest.raises(NotConnected, match="dly auth gmail"):
         await client.profile()
 
@@ -355,4 +343,4 @@ async def test_missing_secret_key_raises_key_error(monkeypatch: pytest.MonkeyPat
 
 def test_construction_needs_no_env_or_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NANGO_SECRET_KEY")
-    NangoGmailClient(store=FakeConnectionStore())
+    NangoGmailClient()

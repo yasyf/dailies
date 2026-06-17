@@ -15,12 +15,12 @@ from dailies.agent import ClaudeAgentSDKProvider
 from dailies.browser import COOKIE_BROWSERS, import_cookies
 from dailies.connections import (
     INTEGRATIONS,
-    Connection,
     EnvIntegration,
     Integration,
+    NangoCredential,
     NangoIntegration,
     NotConnected,
-    connection_store,
+    credential_store,
     integration_ready,
     unready_fix,
 )
@@ -79,14 +79,14 @@ def db_init() -> None:
 async def account_email(integration: NangoIntegration) -> str:
     match integration.name:
         case "gmail":
-            return (await NangoGmailClient(store=connection_store()).profile()).email
+            return (await NangoGmailClient().profile()).email
         case unknown:
             raise KeyError(unknown)
 
 
 async def await_connection(
     client: httpx.AsyncClient, *, end_user_id: str, integration: NangoIntegration
-) -> Connection:
+) -> NangoCredential:
     try:
         with anyio.fail_after(AUTH_TIMEOUT):
             while True:
@@ -100,7 +100,7 @@ async def await_connection(
                     ),
                     None,
                 ):
-                    return Connection(
+                    return NangoCredential(
                         connection_id=found["connection_id"], provider_config_key=found["provider_config_key"]
                     )
                 await anyio.sleep(AUTH_POLL_INTERVAL)
@@ -125,8 +125,8 @@ async def connect_integration(integration: NangoIntegration) -> None:
         ).json()
         click.echo(f"Complete the connection in your browser: {(link := session['data']['connect_link'])}")
         click.launch(link)
-        connection = await await_connection(client, end_user_id=end_user_id, integration=integration)
-    await connection_store().store(integration.name, connection)
+        credential = await await_connection(client, end_user_id=end_user_id, integration=integration)
+    await credential_store().save(integration.name, credential)
     click.echo(f"Authenticated {await account_email(integration)}")
 
 
@@ -151,7 +151,11 @@ def auth_command(integration: Integration) -> click.Command:
 
             @click.command(nango.name, help=f"Connect {nango.name} through a Nango connect link.")
             def connect() -> None:
-                anyio.run(connect_integration, nango)
+                async def go() -> None:
+                    async with lifespan():
+                        await connect_integration(nango)
+
+                anyio.run(go)
 
         case EnvIntegration() as env:
 

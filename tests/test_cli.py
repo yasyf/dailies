@@ -13,17 +13,18 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
-from dailies import cli
+from dailies import cli, connections
 from dailies.activation import ActivationError, Problem
 from dailies.agent import ClaudeAgentSDKProvider
 from dailies.cli import main
-from dailies.connections import Connection, NotConnected
+from dailies.connections import NangoCredential, NotConnected
 from dailies.engine import Engine, TriggerFired
-from dailies.gmail import GmailClient
+from dailies.gmail import GmailClient, NangoGmailClient
 from dailies.interview import InterviewError
 from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, TaskStatus, WorkflowId
 from dailies.profile import AccountSource, EmailSource, Profile, ProfileNotFound, Sourced, UserSource
 from dailies.web import WebClient
+from tests.fakes import FakeCredentialStore
 
 pytestmark = pytest.mark.unit
 
@@ -114,9 +115,12 @@ def mock_clients(monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Reque
     )
 
 
-def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPatch, state_dir: Path) -> None:
+def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
     monkeypatch.setattr(cli, "AUTH_POLL_INTERVAL", 0.0)
+    store = FakeCredentialStore()
+    monkeypatch.setattr(cli, "credential_store", lambda: store)
+    monkeypatch.setattr(cli, "NangoGmailClient", lambda: NangoGmailClient(credentials=store))
     launched: list[str] = []
     monkeypatch.setattr(click, "launch", lambda url: launched.append(url) or 0)
     minted: list[str] = []
@@ -158,14 +162,14 @@ def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPat
     assert "https://connect.nango.dev/abc" in result.output
     assert "Authenticated yasyfm@gmail.com" in result.output
     assert polls == []
-    stored = Connection.model_validate_json((state_dir / "connections" / "gmail.json").read_bytes())
-    assert stored == Connection(connection_id="conn-1", provider_config_key="google-mail")
+    assert store.credentials == {"gmail": NangoCredential(connection_id="conn-1", provider_config_key="google-mail")}
 
 
 def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
     monkeypatch.delenv("BLUEBUBBLES_URL", raising=False)
     monkeypatch.delenv("BLUEBUBBLES_PASSWORD", raising=False)
+    monkeypatch.setattr(connections, "credential_store", lambda: FakeCredentialStore())
     result = CliRunner().invoke(main, ["auth", "status"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
@@ -176,15 +180,16 @@ def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "bluebubbles: not ready — set BLUEBUBBLES_URL and BLUEBUBBLES_PASSWORD (see `dly auth bluebubbles`)" in lines
 
 
-def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch, state_dir: Path) -> None:
+def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
     monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
     monkeypatch.setenv("BLUEBUBBLES_URL", "http://mac.tailnet:1234")
     monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "hunter2")
-    (state_dir / "connections").mkdir(parents=True)
-    (state_dir / "connections" / "gmail.json").write_text(
-        Connection(connection_id="conn-1", provider_config_key="google-mail").model_dump_json()
+    store = FakeCredentialStore(
+        credentials={"gmail": NangoCredential(connection_id="conn-1", provider_config_key="google-mail")}
     )
+    monkeypatch.setattr(connections, "credential_store", lambda: store)
+    monkeypatch.setattr(cli, "NangoGmailClient", lambda: NangoGmailClient(credentials=store))
 
     def handle(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/proxy/gmail/v1/users/me/profile"

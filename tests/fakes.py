@@ -18,7 +18,7 @@ from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
 from dailies.bluebubbles import MessageSendFailed, SentMessage
-from dailies.connections import Connection, Credential, NotConnected
+from dailies.connections import Credential, NotConnected
 from dailies.gmail import SEARCH_LIMIT, GmailProfile, MessageMeta, SentEmail, ThreadNotFound
 from dailies.gmail import EmailMessage as GmailMessage
 from dailies.interface.presenter import BlastRadius
@@ -323,19 +323,6 @@ class FakeVault:
         if item not in self.logins:
             raise VaultLookupFailed(item, f'"{item}" isn\'t an item in any vault')
         return self.logins[item]
-
-
-@dataclass(frozen=True, slots=True)
-class FakeConnectionStore:
-    connections: dict[str, Connection] = field(default_factory=dict)
-
-    async def load(self, name: str) -> Connection:
-        if name not in self.connections:
-            raise NotConnected(name)
-        return self.connections[name]
-
-    async def store(self, name: str, connection: Connection) -> None:
-        self.connections[name] = connection
 
 
 @dataclass(frozen=True, slots=True)

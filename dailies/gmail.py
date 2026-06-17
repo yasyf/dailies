@@ -6,7 +6,7 @@ import os
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.message import EmailMessage as MimeMessage
 from typing import Any, Protocol
@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import html2text
 import httpx
 
-from dailies.connections import ConnectionStore, connection_store
+from dailies.connections import CredentialStore, NangoCredential, credential_store
 from dailies.models import FrozenModel
 
 NANGO_API = "https://api.nango.dev"
@@ -126,27 +126,28 @@ def checked(response: httpx.Response) -> httpx.Response:
 class NangoGmailClient:
     """GmailClient calling the Gmail API through Nango's proxy.
 
-    Construction performs no I/O and reads no environment; the connection and
-    ``NANGO_SECRET_KEY`` are resolved per call so unconnected integrations only
-    fail when actually used.
+    Construction performs no I/O and reads no environment; the stored credential
+    and ``NANGO_SECRET_KEY`` are resolved per call so unconnected integrations
+    only fail when actually used.
     """
 
-    store: ConnectionStore
+    credentials: CredentialStore = field(default_factory=credential_store)
     transport: httpx.AsyncBaseTransport | None = None
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[httpx.AsyncClient]:
-        connection = await self.store.load("gmail")
-        async with httpx.AsyncClient(
-            base_url=f"{NANGO_API}/proxy/gmail/v1/users/me",
-            headers={
-                "Authorization": f"Bearer {os.environ['NANGO_SECRET_KEY']}",
-                "Connection-Id": connection.connection_id,
-                "Provider-Config-Key": connection.provider_config_key,
-            },
-            transport=self.transport,
-        ) as client:
-            yield client
+        match await self.credentials.load("gmail"):
+            case NangoCredential(connection_id=connection_id, provider_config_key=provider_config_key):
+                async with httpx.AsyncClient(
+                    base_url=f"{NANGO_API}/proxy/gmail/v1/users/me",
+                    headers={
+                        "Authorization": f"Bearer {os.environ['NANGO_SECRET_KEY']}",
+                        "Connection-Id": connection_id,
+                        "Provider-Config-Key": provider_config_key,
+                    },
+                    transport=self.transport,
+                ) as client:
+                    yield client
 
     async def fetch_thread(self, client: httpx.AsyncClient, thread_id: str, *, fmt: str) -> dict[str, Any]:
         response = await client.get(f"/threads/{thread_id}", params={"format": fmt})
@@ -210,4 +211,4 @@ class NangoGmailClient:
 
 
 def gmail_client() -> GmailClient:
-    return NangoGmailClient(store=connection_store())
+    return NangoGmailClient()

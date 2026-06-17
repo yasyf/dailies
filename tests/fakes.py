@@ -87,12 +87,13 @@ class ToolDrivingProvider:
     script: list[tuple[str, dict[str, JsonValue]]]
     outputs: list[object] = field(default_factory=list)
     requests: list[AgentRequest] = field(default_factory=list)
+    ok: bool = True
 
     async def run(self, request: AgentRequest) -> AgentResult:
         self.requests.append(request)
         specs = {spec.name: spec for spec in request.tools}
         self.outputs.extend([await specs[name].invoke(args) for name, args in self.script])
-        return AgentResult(text="", ok=True)
+        return AgentResult(text="", ok=self.ok)
 
 
 @dataclass(frozen=True, slots=True)

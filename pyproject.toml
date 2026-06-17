@@ -29,6 +29,7 @@ dependencies = [
     "httpx>=0.28",
     "loguru>=0.7",
     "pydantic>=2.11",
+    "rich>=14",
     "stagehand>=3",
     "textual>=8",
     "tzlocal>=5.3.1",

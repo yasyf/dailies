@@ -162,6 +162,32 @@ def merge_fact(profile: Profile, fact: Fact) -> Profile:
             return profile.model_copy(update={"facts": [fact if f is existing else f for f in profile.facts]})
 
 
+def merge_loyalty(profile: Profile, program: LoyaltyProgram) -> Profile:
+    match next(
+        (p for p in profile.loyalty_programs if p.kind == program.kind and p.program == program.program), None
+    ):
+        case None:
+            return profile.model_copy(update={"loyalty_programs": [*profile.loyalty_programs, program]})
+        case existing if keeps_existing(existing.member_number, incoming=program.member_number.confidence):
+            return profile
+        case existing:
+            return profile.model_copy(
+                update={"loyalty_programs": [program if p is existing else p for p in profile.loyalty_programs]}
+            )
+
+
+def merge_merchant(profile: Profile, merchant: Merchant) -> Profile:
+    match next((existing for existing in profile.merchants if existing.name == merchant.name), None):
+        case None:
+            return profile.model_copy(update={"merchants": [*profile.merchants, merchant]})
+        case existing if existing == merchant:
+            return profile
+        case existing:
+            return profile.model_copy(
+                update={"merchants": [merchant if m is existing else m for m in profile.merchants]}
+            )
+
+
 async def load_profile() -> Profile:
     """Load the saved profile — the one read codepath; raises ProfileNotFound when none is saved."""
     document = await UserProfile.get(PROFILE_ID)

@@ -4,7 +4,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from dailies.discovery import DISCOVERY_SYSTEM, MiningToolSet, discover_profile, discovery_prompt
+from dailies.discovery import (
+    DISCOVERY_RECORDING,
+    DISCOVERY_SYSTEM,
+    MiningToolSet,
+    discover_profile,
+    discovery_prompt,
+)
 from dailies.gmail import MAX_BODY, EmailMessage
 from dailies.models import LOCAL_TZ
 from dailies.profile import AccountSource, EmailSource, LoyaltyProgram, Profile, Sourced
@@ -50,33 +56,20 @@ def email_source(message: EmailMessage) -> EmailSource:
     return EmailSource(message_id=message.id, sender=message.sender, subject=message.subject, date=message.date)
 
 
-def sourced_json(value: str, message: EmailMessage) -> dict[str, object]:
+def source_json(message: EmailMessage) -> dict[str, object]:
     return {
-        "value": value,
-        "source": {
-            "kind": "email",
-            "message_id": message.id,
-            "sender": message.sender,
-            "subject": message.subject,
-            "date": message.date.isoformat(),
-        },
-        "confidence": "high",
+        "kind": "email",
+        "message_id": message.id,
+        "sender": message.sender,
+        "subject": message.subject,
+        "date": message.date.isoformat(),
     }
 
 
-SUBMISSION = {
-    "value": {
-        "name": sourced_json("Yasyf Mohamedali", SIGNATURE),
-        "email": {"value": "fake@example.com", "source": {"kind": "account", "detail": "the connected gmail account"}},
-        "phone": sourced_json("+1 (415) 555-0100", SIGNATURE),
-        "employer": sourced_json("Initech", SIGNATURE),
-        "role": sourced_json("VP of Engineering", SIGNATURE),
-        "home_address": sourced_json(ADDRESS, DOORDASH),
-        "loyalty_programs": [
-            {"kind": "airline", "program": "MileagePlus", "member_number": sourced_json("UA12345", UNITED)}
-        ],
-    }
-}
+def field_call(field: str, value: str, message: EmailMessage) -> tuple[str, dict[str, object]]:
+    args = {"field": field, "value": value, "source": source_json(message), "confidence": "high"}
+    return ("update_profile_field", args)
+
 
 EXPECTED = Profile(
     name=Sourced[str](value="Yasyf Mohamedali", source=email_source(SIGNATURE)),
@@ -100,7 +93,21 @@ SCRIPT: list[tuple[str, dict[str, object]]] = [
     ("get_message", {"message_id": "dd-1"}),
     ("search_emails", {"query": "united"}),
     ("get_message", {"message_id": "ua-1"}),
-    ("submit", SUBMISSION),
+    field_call("name", "Yasyf Mohamedali", SIGNATURE),
+    field_call("phone", "+1 (415) 555-0100", SIGNATURE),
+    field_call("employer", "Initech", SIGNATURE),
+    field_call("role", "VP of Engineering", SIGNATURE),
+    field_call("home_address", ADDRESS, DOORDASH),
+    (
+        "record_loyalty_program",
+        {
+            "kind": "airline",
+            "program": "MileagePlus",
+            "member_number": "UA12345",
+            "source": source_json(UNITED),
+            "confidence": "high",
+        },
+    ),
 ]
 
 
@@ -124,22 +131,26 @@ async def test_discovery_reads_full_bodies_past_truncation_and_returns_exact_pro
     assert result == EXPECTED
 
 
-async def test_discovery_request_exposes_exactly_mining_web_and_submit_tools() -> None:
-    provider = ToolDrivingProvider([("submit", SUBMISSION)])
+async def test_discovery_request_exposes_exactly_mining_web_and_record_tools() -> None:
+    provider = ToolDrivingProvider([])
     await discover_profile(provider, gmail=seeded_gmail(), web=FakeWeb())
     (request,) = provider.requests
     assert sorted(spec.name for spec in request.tools) == [
         "fetch_url",
         "get_message",
         "get_thread",
+        "record_fact",
+        "record_loyalty_program",
+        "record_merchant",
         "scrape",
         "search_emails",
         "search_web",
-        "submit",
+        "update_profile_field",
     ]
     assert "in:sent" in request.system
     assert '"delivered to"' in request.system
     assert DISCOVERY_SYSTEM in request.system
+    assert DISCOVERY_RECORDING in request.system
 
 
 def test_discovery_prompt_injects_account_timezone_date_and_partner() -> None:

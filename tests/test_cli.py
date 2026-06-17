@@ -284,7 +284,9 @@ def patch_profile_io(
     async def fake_save(profile: Profile) -> None:
         saved.append(profile)
 
-    async def fake_discover(provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient) -> Profile:
+    async def fake_discover(
+        provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient, listener: object = None
+    ) -> Profile:
         providers.append(provider)
         assert discovered is not None, "discover_profile must not run in this scenario"
         return discovered
@@ -397,7 +399,9 @@ def test_profile_init_force_keeps_existing_values_discovery_missed(monkeypatch: 
 def test_profile_init_not_connected_names_auth_fix(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_profile_io(monkeypatch, existing=None)
 
-    async def boom(provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient) -> Profile:
+    async def boom(
+        provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient, listener: object = None
+    ) -> Profile:
         raise NotConnected("gmail")
 
     monkeypatch.setattr(cli, "discover_profile", boom)
@@ -409,7 +413,9 @@ def test_profile_init_not_connected_names_auth_fix(monkeypatch: pytest.MonkeyPat
 def test_profile_init_interview_error_suggests_rerun(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_profile_io(monkeypatch, existing=None)
 
-    async def boom(provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient) -> Profile:
+    async def boom(
+        provider: ClaudeAgentSDKProvider, *, gmail: GmailClient, web: WebClient, listener: object = None
+    ) -> Profile:
         raise InterviewError("agent never submitted")
 
     monkeypatch.setattr(cli, "discover_profile", boom)

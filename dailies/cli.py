@@ -32,6 +32,8 @@ from dailies.documents import Task
 from dailies.engine import Engine, TriggerFired
 from dailies.gmail import NANGO_API, NangoGmailClient, checked, gmail_client
 from dailies.interface import TextualPresenter, run_tui
+from dailies.interface.console import Glyphs, confirm, console, step, success
+from dailies.interface.profile_view import MiningDashboard, profile_panel
 from dailies.interview import InterviewError, InterviewRunner
 from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, Timezone, WorkflowId
 from dailies.profile import (
@@ -40,7 +42,6 @@ from dailies.profile import (
     ProfileScalar,
     Sourced,
     UserSource,
-    describe,
     load_profile,
     save_profile,
 )
@@ -199,63 +200,6 @@ def status() -> None:
     anyio.run(go)
 
 
-def render_profile(found: Profile) -> str:
-    def entry(label: str, item: Sourced[str] | None, *, indent: str = "") -> list[str]:
-        return [] if item is None else [f"{indent}{label}: {item.value}", f"{indent}  {describe(item.source)}"]
-
-    def section(title: str, lines: list[str]) -> list[str]:
-        return [title, *lines] if lines else []
-
-    return "\n".join(
-        [
-            *(
-                line
-                for name in ("name", "email", "timezone", "phone", "imessage_handle", "home_address")
-                for line in entry(name.replace("_", " "), getattr(found, name))
-            ),
-            *(line for name in ("birthday", "employer", "role") for line in entry(name, getattr(found, name))),
-            f"partner: {found.partner.name}",
-            *(
-                line
-                for sub in PARTNER_SCALARS
-                for line in entry(sub.replace("_", " "), getattr(found.partner, sub), indent="  ")
-            ),
-            *section(
-                "loyalty programs:",
-                [
-                    line
-                    for program in found.loyalty_programs
-                    for line in (
-                        f"  {program.program} ({program.kind}"
-                        f"{f', {program.status_tier}' if program.status_tier else ''}): "
-                        f"{program.member_number.value}",
-                        f"    {describe(program.member_number.source)}",
-                    )
-                ],
-            ),
-            *section(
-                "merchants:",
-                [
-                    line
-                    for merchant in found.merchants
-                    for line in (
-                        f"  {merchant.name} ({merchant.category}{f', {merchant.cadence}' if merchant.cadence else ''})",
-                        f"    {describe(merchant.source)}",
-                    )
-                ],
-            ),
-            *section(
-                "facts:",
-                [
-                    line
-                    for fact in found.facts
-                    for line in (f"  {fact.label}: {fact.value}", f"    {describe(fact.source)}")
-                ],
-            ),
-        ]
-    )
-
-
 async def saved_profile() -> Profile | None:
     try:
         return await load_profile()
@@ -290,23 +234,28 @@ async def init_profile(*, force: bool = False) -> None:
     existing = await saved_profile()
     if existing is not None and not force:
         raise click.ClickException("a profile already exists — re-run with --force to re-mine it")
-    click.echo("Mining your inbox and the web — this can take a few minutes...")
-    try:
-        discovered = await discover_profile(
-            ClaudeAgentSDKProvider(max_turns=DISCOVERY_MAX_TURNS), gmail=gmail_client(), web=web_client()
-        )
-    except NotConnected as exc:
-        raise click.ClickException(str(exc)) from exc
-    except InterviewError as exc:
-        raise click.ClickException(f"profile discovery failed: {exc} — re-run `dly profile init`") from exc
+    con = console()
+    con.print(step("Mining your inbox and the web — this can take a few minutes...", glyph=Glyphs.SEARCH))
+    with MiningDashboard(con) as dash:
+        try:
+            discovered = await discover_profile(
+                ClaudeAgentSDKProvider(max_turns=DISCOVERY_MAX_TURNS),
+                gmail=gmail_client(),
+                web=web_client(),
+                listener=dash.on_event,
+            )
+        except NotConnected as exc:
+            raise click.ClickException(str(exc)) from exc
+        except InterviewError as exc:
+            raise click.ClickException(f"profile discovery failed: {exc} — re-run `dly profile init`") from exc
     merged = merge_profiles(discovered, existing) if existing is not None else discovered
-    click.echo(render_profile(merged))
-    click.confirm("Save this profile?", abort=True)
+    con.print(profile_panel(merged))
+    confirm("Save this profile?", abort=True)
     await save_profile(merged)
-    click.echo("Profile saved.")
+    con.print(success("Profile saved."))
     await seed_refresh_task()
     await activate_task(REFRESH_TASK_ID, ack_gaps=True, spend_policy=None)
-    click.echo("Weekly profile refresh scheduled.")
+    con.print(success("Weekly profile refresh scheduled.", glyph=Glyphs.SCHEDULE))
 
 
 def edit_field(saved: Profile, field: str, value: str) -> Profile:
@@ -349,7 +298,7 @@ def profile_show() -> None:
                 saved = await load_profile()
             except ProfileNotFound as exc:
                 raise click.ClickException(str(exc)) from exc
-            click.echo(render_profile(saved))
+            console().print(profile_panel(saved))
 
     anyio.run(go)
 

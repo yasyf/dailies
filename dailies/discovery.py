@@ -6,16 +6,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from dailies.agent import AgentRequest
 from dailies.gmail import EmailMessage, truncate
-from dailies.interview import collect
+from dailies.interview import InterviewError
 from dailies.models import LOCAL_TZ
-from dailies.profile import Profile
-from dailies.tools.base import StructuredSink, ToolSet, tool
+from dailies.profile import AccountSource, Profile, Sourced
+from dailies.tools.base import ToolSet, tool
 from dailies.tools.inputs import WebToolSet
+from dailies.tools.profile import DraftProfile, log_draft_event
 
 if TYPE_CHECKING:
     from dailies.agent import AgentProvider
     from dailies.gmail import GmailClient
+    from dailies.tools.profile import DraftListener
     from dailies.web import WebClient
 
 DISCOVERY_MAX_TURNS = 80
@@ -27,9 +30,10 @@ DISCOVERY_SYSTEM = (
     "message_id, sender, subject, and date, or the web page's URL. Set confidence to high when the value is "
     "stated in a primary document (a receipt, an itinerary, a signature block), medium when inferred (an "
     "employer from a mail domain), and low when guessed. When sources disagree, prefer the most recent "
-    "occurrence. Leave a field absent when no evidence supports it — except name: always submit your best "
-    "inference, at low confidence if need be. Never use the user source kind — it is reserved for values "
-    "the user types at review; defaults you keep (like the machine timezone) carry an account source. "
+    "occurrence. Leave a field absent when no evidence supports it — except name: always record your best "
+    "inference via update_profile_field, at low confidence if need be. Never use the user source kind — it is "
+    "reserved for values the user types at review; defaults you keep (like the machine timezone) carry an "
+    "account source. "
     "search_emails truncates bodies and returns at most 20 matches, so ALWAYS call get_message for the full "
     "body before extracting an address, a member number, or a signature — those details live in the footers "
     "truncation cuts off. Keep queries narrow and recent with operators like newer_than:1y. "
@@ -47,6 +51,14 @@ DISCOVERY_SYSTEM = (
     'Finish with web enrichment seeded by what you found: search_web "<name> <employer>", look for '
     "LinkedIn, GitHub, and a personal site, and fetch_url to confirm before recording anything. Mail "
     "outranks the web for contact details."
+)
+
+DISCOVERY_RECORDING = (
+    "Record every value the instant you confirm it, then keep mining — there is no final submit and nothing to "
+    "assemble at the end. Use update_profile_field for each scalar (name, phone, imessage_handle, home_address, "
+    "birthday, employer, role), record_fact for any other durable fact, record_loyalty_program for each airline "
+    "or hotel membership, and record_merchant for each recurring merchant. The email field is already filled "
+    "from the connected account — never record it again. Stop once your leads are exhausted."
 )
 
 
@@ -81,17 +93,40 @@ def discovery_prompt(account_email: str) -> str:
     )
 
 
-async def discover_profile(provider: AgentProvider, *, gmail: GmailClient, web: WebClient) -> Profile:
+def seed_profile(email: str) -> Profile:
+    """Seed a Profile from the connected account: email at high confidence, name as a low-confidence local-part."""
+    source = AccountSource(detail="the connected gmail account")
+    return Profile(
+        email=Sourced[str](value=email, source=source),
+        name=Sourced[str](value=email.split("@", 1)[0], source=source, confidence="low"),
+    )
+
+
+async def discover_profile(
+    provider: AgentProvider, *, gmail: GmailClient, web: WebClient, listener: DraftListener = log_draft_event
+) -> Profile:
     """Mine the inbox, then the web, into a Profile through one agent run.
 
-    Raises NotConnected when gmail has no stored connection and InterviewError
-    when the agent finishes without submitting a profile.
+    Seeds the profile from the connected account (email at high confidence, name as a
+    low-confidence local-part placeholder), then records each discovered value onto a
+    draft as the agent finds it, notifying ``listener`` on every effective merge, and
+    returns the accumulated draft.
+
+    Raises NotConnected when gmail has no stored connection and InterviewError when the
+    run fails before anything is recorded.
     """
     account = await gmail.profile()
-    return await collect(
-        provider,
-        StructuredSink(Profile),
-        system=DISCOVERY_SYSTEM,
-        prompt=discovery_prompt(account.email),
-        toolsets=(MiningToolSet(gmail), WebToolSet(web)),
+    seed = seed_profile(account.email)
+    draft = DraftProfile(seed, listener)
+    result = await provider.run(
+        AgentRequest(
+            system=f"{DISCOVERY_SYSTEM}\n\n{DISCOVERY_RECORDING}",
+            prompt=discovery_prompt(account.email),
+            tools=tuple(
+                t.to_spec() for ts in (MiningToolSet(gmail), WebToolSet(web), draft) for t in ts.get_tools()
+            ),
+        )
     )
+    if not result.ok and draft.draft is seed:
+        raise InterviewError(result.text)
+    return draft.draft

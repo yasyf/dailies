@@ -130,6 +130,7 @@ class WorkflowLease(TimestampedDocument):
 
 
 def document_models() -> list[type[Document]]:
+    from dailies.connections import IntegrationCredentials
     from dailies.profile import UserProfile
 
-    return [Task, Workflow, Run, Subscription, WorkflowLease, UserProfile]
+    return [Task, Workflow, Run, Subscription, WorkflowLease, UserProfile, IntegrationCredentials]

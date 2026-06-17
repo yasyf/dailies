@@ -1,4 +1,8 @@
-"""Integration registry and readiness: Nango-connected services and env-credentialed ones."""
+"""Integration registry and readiness: Nango-connected services and env-credentialed ones.
+
+Stored credentials live unencrypted at rest in Mongo, the same posture as the prior
+env token (and the onepassword secrets-transit caveat) — encryption is future work.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,9 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, Protocol
 
 from pydantic import Field
+from pymongo import ASCENDING, IndexModel
 
+from dailies.documents import TimestampedDocument
 from dailies.models import FrozenModel, StoredModel
 from dailies.storage import StateStorage, state_storage
 
@@ -83,6 +89,60 @@ class StateConnectionStore:
 
 def connection_store() -> ConnectionStore:
     return StateConnectionStore(storage=state_storage())
+
+
+class NangoCredential(FrozenModel):
+    kind: Literal["nango"] = "nango"
+    connection_id: str
+    provider_config_key: str
+
+
+class WizardCredential(FrozenModel):
+    kind: Literal["wizard"] = "wizard"
+    values: dict[str, str]
+
+
+type Credential = Annotated[NangoCredential | WizardCredential, Field(discriminator="kind")]
+
+
+class IntegrationCredentials(TimestampedDocument):
+    """One integration's stored credential, keyed by registry name."""
+
+    name: str
+    credential: Credential
+
+    class Settings:
+        name = "credentials"
+        indexes = [IndexModel([("name", ASCENDING)], unique=True)]
+
+
+class CredentialStore(Protocol):
+    """Persists one credential per integration name."""
+
+    async def load(self, name: str) -> Credential: ...
+
+    async def save(self, name: str, credential: Credential) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class MongoCredentialStore:
+    async def load(self, name: str) -> Credential:
+        document = await IntegrationCredentials.find_one(IntegrationCredentials.name == name)
+        if document is None:
+            raise NotConnected(name)
+        return document.credential
+
+    async def save(self, name: str, credential: Credential) -> None:
+        match await IntegrationCredentials.find_one(IntegrationCredentials.name == name):
+            case None:
+                await IntegrationCredentials(name=name, credential=credential).insert()
+            case document:
+                document.credential = credential
+                await document.replace()
+
+
+def credential_store() -> CredentialStore:
+    return MongoCredentialStore()
 
 
 async def integration_ready(integration: Integration) -> bool:

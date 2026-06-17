@@ -18,7 +18,7 @@ from pydantic import JsonValue
 
 from dailies.agent import AgentRequest, AgentResult
 from dailies.bluebubbles import MessageSendFailed, SentMessage
-from dailies.connections import Connection, NotConnected
+from dailies.connections import Connection, Credential, NotConnected
 from dailies.gmail import SEARCH_LIMIT, GmailProfile, MessageMeta, SentEmail, ThreadNotFound
 from dailies.gmail import EmailMessage as GmailMessage
 from dailies.interface.presenter import BlastRadius
@@ -336,3 +336,16 @@ class FakeConnectionStore:
 
     async def store(self, name: str, connection: Connection) -> None:
         self.connections[name] = connection
+
+
+@dataclass(frozen=True, slots=True)
+class FakeCredentialStore:
+    credentials: dict[str, Credential] = field(default_factory=dict)
+
+    async def load(self, name: str) -> Credential:
+        if name not in self.credentials:
+            raise NotConnected(name)
+        return self.credentials[name]
+
+    async def save(self, name: str, credential: Credential) -> None:
+        self.credentials[name] = credential

@@ -69,7 +69,10 @@ class BlueBubblesClient:
 
     async def ping(self) -> bool:
         async with self.session() as client:
-            response = await client.get("/api/v1/ping")
+            try:
+                response = await client.get("/api/v1/ping")
+            except httpx.HTTPError:
+                return False
         return response.status_code == 200 and response.json()["status"] == 200
 
 

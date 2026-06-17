@@ -82,6 +82,14 @@ async def test_ping_false_when_unhealthy(response: httpx.Response) -> None:
     assert await client.ping() is False
 
 
+async def test_ping_false_when_server_unreachable() -> None:
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    client = BlueBubblesClient(credentials=bb_store(), transport=httpx.MockTransport(unreachable))
+    assert await client.ping() is False
+
+
 async def test_missing_credentials_raise_not_connected() -> None:
     client = BlueBubblesClient(credentials=FakeCredentialStore())
     with pytest.raises(NotConnected):

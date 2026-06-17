@@ -29,7 +29,6 @@ def test_registry_entries() -> None:
         fields=(
             CredentialField(key="OP_SERVICE_ACCOUNT_TOKEN", prompt="1Password service account token", secret=True),
         ),
-        hint="create a 1Password service account with read access to your vaults and copy its token",
     )
     assert BLUEBUBBLES == WizardIntegration(
         name="bluebubbles",
@@ -37,7 +36,6 @@ def test_registry_entries() -> None:
             CredentialField(key="BLUEBUBBLES_URL", prompt="BlueBubbles server URL"),
             CredentialField(key="BLUEBUBBLES_PASSWORD", prompt="BlueBubbles server password", secret=True),
         ),
-        hint="pair a BlueBubbles server on a Mac (e.g. reachable over Tailscale) and copy its URL and password",
     )
 
 

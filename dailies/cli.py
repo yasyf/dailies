@@ -46,7 +46,7 @@ from dailies.profile import (
 )
 from dailies.refresh import REFRESH_TASK_ID, seed_refresh_task
 from dailies.storage import state_storage
-from dailies.tools import ToolSet
+from dailies.tools import TOOLSETS
 from dailies.web import web_client
 
 AUTH_POLL_INTERVAL = 3.0
@@ -184,7 +184,7 @@ def status() -> None:
     async def go() -> None:
         async with lifespan():
             for name, integration in INTEGRATIONS.items():
-                users = ", ".join(sorted(ts.__name__ for ts in ToolSet.__subclasses__() if name in ts.integrations))
+                users = ", ".join(sorted(ts.__name__ for ts in TOOLSETS if name in ts.integrations))
                 suffix = f" — used by {users}" if users else ""
                 if not await integration_ready(integration):
                     click.echo(f"{name}: not ready — {await unready_fix(integration)}{suffix}")

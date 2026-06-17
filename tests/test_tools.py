@@ -16,6 +16,7 @@ from dailies.tools import TOOLSETS, build_toolsets, render_catalog
 from dailies.tools.action import SentReceipt
 from dailies.tools.base import StructuredSink, ToolError, ToolSet, ToolSpec, tool
 from dailies.tools.inputs import BrowseToolSet
+from dailies.tools.profile import ProfileToolSet
 from dailies.web import SearchResult
 from tests.fakes import FakeBrowser, FakeGmail, FakeIMessage, FakeVault, FakeWeb
 
@@ -362,6 +363,31 @@ def test_render_catalog_enumerates_profile_fields() -> None:
         "birthday, employer and role, partner contact (Rebecca: email/phone), airline and hotel loyalty programs "
         "with member numbers, frequent merchants, and extra facts — each value with its source."
     ) in render_catalog()
+
+
+def test_render_catalog_includes_profile_write_tools() -> None:
+    catalog = render_catalog()
+    assert (
+        "- update_profile_field: Update a scalar profile field from a discovered source; "
+        "never overwrites a value the user entered."
+    ) in catalog
+    assert (
+        "- record_fact: Record a durable fact about the user, upserting by label; "
+        "never overwrites a value the user entered."
+    ) in catalog
+
+
+def test_profile_write_schema_excludes_user_source() -> None:
+    schema = next(t.to_spec() for t in ProfileToolSet().get_tools() if t.name == "update_profile_field").input_schema
+    assert "UserSource" not in schema["$defs"]
+    assert set(schema["$defs"]["DiscoveredSource"]["discriminator"]["mapping"]) == {"email", "web", "account"}
+
+
+async def test_profile_write_rejects_user_source() -> None:
+    spec = next(t.to_spec() for t in ProfileToolSet().get_tools() if t.name == "record_fact")
+    with pytest.raises(ToolError) as excinfo:
+        await spec.invoke({"label": "gym", "value": "Equinox", "source": {"kind": "user"}})
+    assert excinfo.value.error_type == "invalid_input"
 
 
 def test_catalog_stays_in_sync_with_runtime_toolsets() -> None:

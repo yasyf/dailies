@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import get_args
 from uuid import UUID, uuid4
 
 import anyio
@@ -34,6 +35,7 @@ from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, Timezone,
 from dailies.profile import (
     Profile,
     ProfileNotFound,
+    ProfileScalar,
     Sourced,
     UserSource,
     describe,
@@ -47,7 +49,7 @@ from dailies.web import web_client
 AUTH_POLL_INTERVAL = 3.0
 AUTH_TIMEOUT = 300.0
 
-PROFILE_SCALARS = ("name", "email", "phone", "imessage_handle", "home_address", "birthday", "employer", "role")
+PROFILE_SCALARS = get_args(ProfileScalar.__value__)
 PARTNER_SCALARS = ("email", "phone", "imessage_handle")
 PROFILE_FIELDS = (*PROFILE_SCALARS, "timezone", *(f"partner.{sub}" for sub in PARTNER_SCALARS))
 

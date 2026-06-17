@@ -87,3 +87,29 @@ async def test_get_profile_without_profile_raises_tool_error(mongo: AsyncMongoCl
     assert excinfo.value.error_type == "profile_missing"
     assert "dly profile init" in excinfo.value.detail
     assert excinfo.value.fix == "tell the user to run `dly profile init`"
+
+
+async def test_record_fact_upserts_by_label(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    await save_profile(profile())
+    tools = ProfileToolSet()
+    await tools.record_fact(label="gym", value="Equinox", source=WebSource(url="https://equinox.com"))
+    updated = await tools.record_fact(label="gym", value="Barry's", source=WebSource(url="https://barrys.com"))
+    assert [(fact.label, fact.value) for fact in updated.facts] == [("gym", "Barry's")]
+    assert await load_profile() == updated
+
+
+async def test_update_profile_field_respects_sticky_user_source(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    seeded = profile().model_copy(update={"employer": sourced("Acme")})
+    await save_profile(seeded)
+    result = await ProfileToolSet().update_profile_field(
+        field="employer", value="Globex", source=WebSource(url="https://globex.com")
+    )
+    assert result.employer == sourced("Acme")
+    assert await load_profile() == seeded
+
+
+async def test_write_without_profile_raises_tool_error(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
+    with pytest.raises(ToolError) as excinfo:
+        await ProfileToolSet().record_fact(label="gym", value="Equinox", source=WebSource(url="https://equinox.com"))
+    assert excinfo.value.error_type == "profile_missing"
+    assert excinfo.value.fix == "tell the user to run `dly profile init`"

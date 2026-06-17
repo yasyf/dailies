@@ -40,6 +40,7 @@ class UserSource(FrozenModel):
 
 
 type Source = Annotated[EmailSource | WebSource | AccountSource | UserSource, Field(discriminator="kind")]
+type DiscoveredSource = Annotated[EmailSource | WebSource | AccountSource, Field(discriminator="kind")]
 
 
 class Sourced[T](FrozenModel):
@@ -128,6 +129,37 @@ def describe(source: Source) -> str:
             return f"from {detail}"
         case UserSource():
             return "entered by you"
+
+
+type ProfileScalar = Literal[
+    "name", "email", "phone", "imessage_handle", "home_address", "birthday", "employer", "role"
+]
+
+CONFIDENCE_RANK: dict[Confidence, int] = {"high": 3, "medium": 2, "low": 1}
+
+
+def keeps_existing(existing: Sourced[str] | Fact, *, incoming: Confidence) -> bool:
+    match existing.source:
+        case UserSource():
+            return True
+        case _:
+            return CONFIDENCE_RANK[existing.confidence] > CONFIDENCE_RANK[incoming]
+
+
+def merge_field(profile: Profile, field: ProfileScalar, sourced: Sourced[str]) -> Profile:
+    if (existing := getattr(profile, field)) is not None and keeps_existing(existing, incoming=sourced.confidence):
+        return profile
+    return profile.model_copy(update={field: sourced})
+
+
+def merge_fact(profile: Profile, fact: Fact) -> Profile:
+    match next((existing for existing in profile.facts if existing.label == fact.label), None):
+        case None:
+            return profile.model_copy(update={"facts": [*profile.facts, fact]})
+        case existing if keeps_existing(existing, incoming=fact.confidence):
+            return profile
+        case existing:
+            return profile.model_copy(update={"facts": [fact if f is existing else f for f in profile.facts]})
 
 
 async def load_profile() -> Profile:

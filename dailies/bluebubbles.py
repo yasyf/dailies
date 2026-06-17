@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import uuid4
 
 import httpx
 
+from dailies.connections import CredentialStore, WizardCredential, credential_store
 from dailies.models import FrozenModel
 
 
@@ -34,23 +34,26 @@ class IMessageClient(Protocol):
 class BlueBubblesClient:
     """IMessageClient calling a BlueBubbles server's REST API.
 
-    Construction performs no I/O and reads no environment; ``BLUEBUBBLES_URL``
-    and ``BLUEBUBBLES_PASSWORD`` are resolved per call so unconfigured machines
-    only fail when a tool is actually used. The envelope ``status`` is
-    authoritative for sends — BlueBubbles reports failures both via HTTP status
-    and envelope status, so the body is parsed without ``raise_for_status``.
+    Construction performs no I/O; the server URL and password are loaded from the
+    credential store per call so unconfigured machines only fail when a tool is
+    actually used. The envelope ``status`` is authoritative for sends —
+    BlueBubbles reports failures both via HTTP status and envelope status, so the
+    body is parsed without ``raise_for_status``.
     """
 
+    credentials: CredentialStore = field(default_factory=credential_store)
     transport: httpx.AsyncBaseTransport | None = None
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[httpx.AsyncClient]:
-        async with httpx.AsyncClient(
-            base_url=os.environ["BLUEBUBBLES_URL"],
-            params={"password": os.environ["BLUEBUBBLES_PASSWORD"]},
-            transport=self.transport,
-        ) as client:
-            yield client
+        match await self.credentials.load("bluebubbles"):
+            case WizardCredential(values=values):
+                async with httpx.AsyncClient(
+                    base_url=values["BLUEBUBBLES_URL"],
+                    params={"password": values["BLUEBUBBLES_PASSWORD"]},
+                    transport=self.transport,
+                ) as client:
+                    yield client
 
     async def send(self, *, to: str, text: str) -> SentMessage:
         async with self.session() as client:

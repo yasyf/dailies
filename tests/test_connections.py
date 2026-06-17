@@ -5,9 +5,11 @@ import pytest
 from dailies import connections
 from dailies.connections import (
     INTEGRATIONS,
-    EnvIntegration,
+    CredentialField,
     NangoCredential,
     NangoIntegration,
+    WizardCredential,
+    WizardIntegration,
     integration_ready,
     unready_fix,
 )
@@ -22,14 +24,19 @@ BLUEBUBBLES = INTEGRATIONS["bluebubbles"]
 
 def test_registry_entries() -> None:
     assert GMAIL == NangoIntegration(name="gmail", provider_config_key="google-mail")
-    assert ONEPASSWORD == EnvIntegration(
+    assert ONEPASSWORD == WizardIntegration(
         name="onepassword",
-        env_vars=("OP_SERVICE_ACCOUNT_TOKEN",),
+        fields=(
+            CredentialField(key="OP_SERVICE_ACCOUNT_TOKEN", prompt="1Password service account token", secret=True),
+        ),
         hint="create a 1Password service account with read access to your vaults and copy its token",
     )
-    assert BLUEBUBBLES == EnvIntegration(
+    assert BLUEBUBBLES == WizardIntegration(
         name="bluebubbles",
-        env_vars=("BLUEBUBBLES_URL", "BLUEBUBBLES_PASSWORD"),
+        fields=(
+            CredentialField(key="BLUEBUBBLES_URL", prompt="BlueBubbles server URL"),
+            CredentialField(key="BLUEBUBBLES_PASSWORD", prompt="BlueBubbles server password", secret=True),
+        ),
         hint="pair a BlueBubbles server on a Mac (e.g. reachable over Tailscale) and copy its URL and password",
     )
 
@@ -47,25 +54,37 @@ async def test_nango_ready_with_stored_connection(monkeypatch: pytest.MonkeyPatc
     assert await integration_ready(GMAIL) is True
 
 
-async def test_env_ready_when_var_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
-    assert await integration_ready(ONEPASSWORD) is True
-
-
-async def test_env_unready_when_var_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
+async def test_wizard_unready_without_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(connections, "credential_store", lambda: FakeCredentialStore())
     assert await integration_ready(ONEPASSWORD) is False
 
 
-async def test_env_requires_every_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BLUEBUBBLES_URL", "http://mac.tailnet:1234")
-    monkeypatch.delenv("BLUEBUBBLES_PASSWORD", raising=False)
+async def test_wizard_ready_when_all_fields_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FakeCredentialStore(
+        credentials={"onepassword": WizardCredential(values={"OP_SERVICE_ACCOUNT_TOKEN": "ops_token"})}
+    )
+    monkeypatch.setattr(connections, "credential_store", lambda: store)
+    assert await integration_ready(ONEPASSWORD) is True
+
+
+async def test_wizard_requires_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    partial = FakeCredentialStore(
+        credentials={"bluebubbles": WizardCredential(values={"BLUEBUBBLES_URL": "http://mac.tailnet:1234"})}
+    )
+    monkeypatch.setattr(connections, "credential_store", lambda: partial)
     assert await integration_ready(BLUEBUBBLES) is False
-    monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "hunter2")
+    complete = FakeCredentialStore(
+        credentials={
+            "bluebubbles": WizardCredential(
+                values={"BLUEBUBBLES_URL": "http://mac.tailnet:1234", "BLUEBUBBLES_PASSWORD": "hunter2"}
+            )
+        }
+    )
+    monkeypatch.setattr(connections, "credential_store", lambda: complete)
     assert await integration_ready(BLUEBUBBLES) is True
 
 
 async def test_unready_fix_strings() -> None:
     assert await unready_fix(GMAIL) == "run `dly auth gmail`"
-    assert await unready_fix(ONEPASSWORD) == "set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)"
-    assert await unready_fix(BLUEBUBBLES) == "set BLUEBUBBLES_URL and BLUEBUBBLES_PASSWORD (see `dly auth bluebubbles`)"
+    assert await unready_fix(ONEPASSWORD) == "run `dly auth onepassword`"
+    assert await unready_fix(BLUEBUBBLES) == "run `dly auth bluebubbles`"

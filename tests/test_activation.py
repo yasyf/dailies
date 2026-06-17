@@ -8,7 +8,7 @@ import pytest
 from pymongo import AsyncMongoClient
 
 from dailies.activation import ActivationError, Problem, TaskNotFound, activate_task, latest_workflows
-from dailies.connections import INTEGRATIONS, unready_fix
+from dailies.connections import INTEGRATIONS, WizardCredential, credential_store, unready_fix
 from dailies.documents import Task, Workflow
 from dailies.models import (
     PromptStr,
@@ -80,9 +80,9 @@ async def test_latest_workflows_returns_max_version_per_id_regardless_of_status(
 
 
 async def test_activate_flips_only_latest_versions_and_sets_spend_policy(
-    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+    mongo: AsyncMongoClient[dict[str, Any]],
 ) -> None:
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
+    await credential_store().save("onepassword", WizardCredential(values={"OP_SERVICE_ACCOUNT_TOKEN": "ops_token"}))
     await seed_profile()
     task = make_task()
     await task.insert()
@@ -117,10 +117,7 @@ async def test_activate_without_caps_keeps_existing_spend_policy(mongo: AsyncMon
     assert reloaded.spend_policy == existing
 
 
-async def test_failure_collects_every_problem_in_order(
-    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
+async def test_failure_collects_every_problem_in_order(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     task = make_task(gaps=["push notifications to a phone", "no calendar access"])
     await task.insert()
     await make_workflow(task.uid, requires=["onepassword"]).insert()
@@ -143,10 +140,7 @@ async def test_failure_collects_every_problem_in_order(
     assert [w.status async for w in Workflow.find(Workflow.task_id == task.uid)] == ["draft", "draft"]
 
 
-async def test_ack_gaps_clears_only_gap_problems(
-    mongo: AsyncMongoClient[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
+async def test_ack_gaps_clears_only_gap_problems(mongo: AsyncMongoClient[dict[str, Any]]) -> None:
     task = make_task(gaps=["push notifications to a phone"])
     await task.insert()
     await make_workflow(task.uid, requires=["onepassword"]).insert()

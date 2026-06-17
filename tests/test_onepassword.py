@@ -7,9 +7,18 @@ from typing import Any
 import anyio
 import pytest
 
+from dailies.connections import NotConnected, WizardCredential
 from dailies.onepassword import Login, OnePasswordClient, VaultLookupFailed, parse_login, vault_client
+from tests.fakes import FakeCredentialStore
 
 pytestmark = pytest.mark.unit
+
+
+def op_store(token: str = "ops_token") -> FakeCredentialStore:
+    return FakeCredentialStore(
+        credentials={"onepassword": WizardCredential(values={"OP_SERVICE_ACCOUNT_TOKEN": token})}
+    )
+
 
 OTP_FIELD = {
     "id": "totp-1",
@@ -51,9 +60,7 @@ def test_parse_login_skips_otp_fields_without_a_totp_value() -> None:
 
 
 async def test_get_login_shells_op_and_parses(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
-    client = OnePasswordClient()
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
+    client = OnePasswordClient(credentials=op_store())
     captured: dict[str, Any] = {}
 
     async def fake_run_process(command: list[str], *, check: bool, env: dict[str, str]) -> CompletedProcess[bytes]:
@@ -70,27 +77,23 @@ async def test_get_login_shells_op_and_parses(monkeypatch: pytest.MonkeyPatch) -
 
 
 async def test_get_login_nonzero_exit_raises_vault_lookup_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
-
     async def fake_run_process(command: list[str], *, check: bool, env: dict[str, str]) -> CompletedProcess[bytes]:
         return completed(1, stderr=b'[ERROR] "github.com" isn\'t an item in any vault\n')
 
     monkeypatch.setattr(anyio, "run_process", fake_run_process)
     with pytest.raises(VaultLookupFailed, match=r"1Password lookup for 'github.com' failed") as excinfo:
-        await OnePasswordClient().get_login("github.com")
+        await OnePasswordClient(credentials=op_store()).get_login("github.com")
     assert excinfo.value.item == "github.com"
     assert excinfo.value.stderr == '[ERROR] "github.com" isn\'t an item in any vault\n'
 
 
-async def test_env_read_per_call_not_at_construction(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
-
+async def test_missing_credentials_raise_not_connected(monkeypatch: pytest.MonkeyPatch) -> None:
     async def explode(command: list[str], *, check: bool, env: dict[str, str]) -> CompletedProcess[bytes]:
-        raise AssertionError("run_process must not run without a token")
+        raise AssertionError("run_process must not run without stored credentials")
 
     monkeypatch.setattr(anyio, "run_process", explode)
-    client = OnePasswordClient()
-    with pytest.raises(KeyError, match="OP_SERVICE_ACCOUNT_TOKEN"):
+    client = OnePasswordClient(credentials=FakeCredentialStore())
+    with pytest.raises(NotConnected, match="onepassword is not connected"):
         await client.get_login("github.com")
 
 

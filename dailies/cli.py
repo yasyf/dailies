@@ -12,14 +12,16 @@ import httpx
 
 from dailies.activation import ActivationError, TaskNotFound, activate_task, latest_workflows
 from dailies.agent import ClaudeAgentSDKProvider
+from dailies.bluebubbles import imessage_client
 from dailies.browser import COOKIE_BROWSERS, import_cookies
 from dailies.connections import (
     INTEGRATIONS,
-    EnvIntegration,
     Integration,
     NangoCredential,
     NangoIntegration,
     NotConnected,
+    WizardCredential,
+    WizardIntegration,
     credential_store,
     integration_ready,
     unready_fix,
@@ -130,14 +132,14 @@ async def connect_integration(integration: NangoIntegration) -> None:
     click.echo(f"Authenticated {await account_email(integration)}")
 
 
-async def verify_env_integration(integration: EnvIntegration) -> None:
-    if await integration_ready(integration):
-        click.echo(f"{integration.name}: ready")
-        return
-    click.echo(f"To set up {integration.name}:")
-    for step, line in enumerate((integration.hint, *(f"set {var}" for var in integration.env_vars)), start=1):
-        click.echo(f"  {step}. {line}")
-    raise click.ClickException(f"{integration.name} is not ready")
+async def auth_wizard(integration: WizardIntegration) -> None:
+    values = {field.key: click.prompt(field.prompt, hide_input=field.secret) for field in integration.fields}
+    await credential_store().save(integration.name, WizardCredential(values=values))
+    if integration.name == "bluebubbles" and not await imessage_client().ping():
+        raise click.ClickException(
+            "could not reach the bluebubbles server — check the URL and password and run `dly auth bluebubbles` again"
+        )
+    click.echo(f"{integration.name}: configured")
 
 
 @main.group()
@@ -157,11 +159,15 @@ def auth_command(integration: Integration) -> click.Command:
 
                 anyio.run(go)
 
-        case EnvIntegration() as env:
+        case WizardIntegration() as wizard:
 
-            @click.command(env.name, help=f"Verify {env.name} credentials or print setup instructions.")
+            @click.command(wizard.name, help=f"Configure {wizard.name} credentials through a guided prompt.")
             def connect() -> None:
-                anyio.run(verify_env_integration, env)
+                async def go() -> None:
+                    async with lifespan():
+                        await auth_wizard(wizard)
+
+                anyio.run(go)
 
     return connect
 
@@ -175,17 +181,18 @@ def status() -> None:
     """Show each integration's readiness, account, and dependent toolsets."""
 
     async def go() -> None:
-        for name, integration in INTEGRATIONS.items():
-            users = ", ".join(sorted(ts.__name__ for ts in ToolSet.__subclasses__() if name in ts.integrations))
-            suffix = f" — used by {users}" if users else ""
-            if not await integration_ready(integration):
-                click.echo(f"{name}: not ready — {await unready_fix(integration)}{suffix}")
-                continue
-            match integration:
-                case NangoIntegration() as nango:
-                    click.echo(f"{name}: connected as {await account_email(nango)}{suffix}")
-                case EnvIntegration():
-                    click.echo(f"{name}: ready{suffix}")
+        async with lifespan():
+            for name, integration in INTEGRATIONS.items():
+                users = ", ".join(sorted(ts.__name__ for ts in ToolSet.__subclasses__() if name in ts.integrations))
+                suffix = f" — used by {users}" if users else ""
+                if not await integration_ready(integration):
+                    click.echo(f"{name}: not ready — {await unready_fix(integration)}{suffix}")
+                    continue
+                match integration:
+                    case NangoIntegration() as nango:
+                        click.echo(f"{name}: connected as {await account_email(nango)}{suffix}")
+                    case WizardIntegration():
+                        click.echo(f"{name}: configured{suffix}")
 
     anyio.run(go)
 

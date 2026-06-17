@@ -67,6 +67,13 @@ auto-loading — a missing required variable fails loudly):
 | `ANTHROPIC_API_KEY` | `sk-ant-…` | Anthropic API key — required to run workflows and the onboarding interview (`dly run`, `dly tick`, `dly interview`, `dly tui`) |
 | `EXA_API_KEY` | `exa-…` | [Exa](https://exa.ai) API key — backs the agent's `search_web` tool; the tool fails per call without it |
 
+Per-integration credentials are not environment variables. Connect each one with
+`dly auth <name>` — `dly auth gmail` opens a Nango connect link, while `dly auth
+onepassword` and `dly auth bluebubbles` prompt for the 1Password service-account
+token and the BlueBubbles URL and password. Each credential is stored in MongoDB,
+so `dly auth status` (which reports every integration's readiness) needs
+`MONGODB_URI` and `MONGODB_DB` set.
+
 A gitignored `.env` ships with localhost defaults. Load it into your shell before
 running:
 

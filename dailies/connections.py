@@ -1,4 +1,4 @@
-"""Integration registry and readiness: Nango-connected services and env-credentialed ones.
+"""Integration registry and readiness: Nango-connected services and wizard-credentialed ones.
 
 Stored credentials live unencrypted at rest in Mongo, the same posture as the prior
 env token (and the onepassword secrets-transit caveat) — encryption is future work.
@@ -6,7 +6,6 @@ env token (and the onepassword secrets-transit caveat) — encryption is future 
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Annotated, Literal, Protocol
 
@@ -25,27 +24,40 @@ class NangoIntegration(FrozenModel):
     provider_config_key: str
 
 
-class EnvIntegration(FrozenModel):
-    """A registry entry for an integration credentialed by environment variables."""
+class CredentialField(FrozenModel):
+    """One credential value the `dly auth` wizard prompts for and stores."""
 
-    kind: Literal["env"] = "env"
+    key: str
+    prompt: str
+    secret: bool = False
+
+
+class WizardIntegration(FrozenModel):
+    """A registry entry for an integration configured through the `dly auth` wizard."""
+
+    kind: Literal["wizard"] = "wizard"
     name: str
-    env_vars: tuple[str, ...]
+    fields: tuple[CredentialField, ...]
     hint: str
 
 
-type Integration = Annotated[NangoIntegration | EnvIntegration, Field(discriminator="kind")]
+type Integration = Annotated[NangoIntegration | WizardIntegration, Field(discriminator="kind")]
 
 INTEGRATIONS: dict[str, Integration] = {
     "gmail": NangoIntegration(name="gmail", provider_config_key="google-mail"),
-    "onepassword": EnvIntegration(
+    "onepassword": WizardIntegration(
         name="onepassword",
-        env_vars=("OP_SERVICE_ACCOUNT_TOKEN",),
+        fields=(
+            CredentialField(key="OP_SERVICE_ACCOUNT_TOKEN", prompt="1Password service account token", secret=True),
+        ),
         hint="create a 1Password service account with read access to your vaults and copy its token",
     ),
-    "bluebubbles": EnvIntegration(
+    "bluebubbles": WizardIntegration(
         name="bluebubbles",
-        env_vars=("BLUEBUBBLES_URL", "BLUEBUBBLES_PASSWORD"),
+        fields=(
+            CredentialField(key="BLUEBUBBLES_URL", prompt="BlueBubbles server URL"),
+            CredentialField(key="BLUEBUBBLES_PASSWORD", prompt="BlueBubbles server password", secret=True),
+        ),
         hint="pair a BlueBubbles server on a Mac (e.g. reachable over Tailscale) and copy its URL and password",
     ),
 }
@@ -113,7 +125,7 @@ def credential_store() -> CredentialStore:
 
 
 async def integration_ready(integration: Integration) -> bool:
-    """Whether the integration is usable: a stored Nango connection, or every env var present."""
+    """Whether the integration's credential is stored and complete."""
     match integration:
         case NangoIntegration(name=name):
             try:
@@ -121,14 +133,14 @@ async def integration_ready(integration: Integration) -> bool:
             except NotConnected:
                 return False
             return True
-        case EnvIntegration(env_vars=env_vars):
-            return all(var in os.environ for var in env_vars)
+        case WizardIntegration(name=name, fields=fields):
+            try:
+                credential = await credential_store().load(name)
+            except NotConnected:
+                return False
+            return isinstance(credential, WizardCredential) and all(field.key in credential.values for field in fields)
 
 
 async def unready_fix(integration: Integration) -> str:
     """The one fix string for an unready integration, shared by `dly auth status` and activation."""
-    match integration:
-        case NangoIntegration(name=name):
-            return f"run `dly auth {name}`"
-        case EnvIntegration(name=name, env_vars=env_vars):
-            return f"set {' and '.join(env_vars)} (see `dly auth {name}`)"
+    return f"run `dly auth {integration.name}`"

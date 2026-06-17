@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import anyio
 
+from dailies.connections import CredentialStore, WizardCredential, credential_store
 from dailies.models import FrozenModel
 
 
@@ -54,20 +55,24 @@ def parse_login(data: dict[str, Any]) -> Login:
 class OnePasswordClient:
     """VaultClient shelling out to the 1Password CLI with a service-account token.
 
-    Construction performs no I/O and reads no environment;
-    ``OP_SERVICE_ACCOUNT_TOKEN`` is resolved per call so unconfigured machines
-    only fail when a login is actually fetched.
+    Construction performs no I/O; the service-account token is loaded from the
+    credential store per call so unconfigured machines only fail when a login is
+    actually fetched.
     """
 
+    credentials: CredentialStore = field(default_factory=credential_store)
+
     async def get_login(self, item: str) -> Login:
-        result = await anyio.run_process(
-            ["op", "item", "get", item, "--format", "json", "--reveal"],
-            check=False,
-            env=os.environ | {"OP_SERVICE_ACCOUNT_TOKEN": os.environ["OP_SERVICE_ACCOUNT_TOKEN"]},
-        )
-        if result.returncode != 0:
-            raise VaultLookupFailed(item, result.stderr.decode())
-        return parse_login(json.loads(result.stdout))
+        match await self.credentials.load("onepassword"):
+            case WizardCredential(values=values):
+                result = await anyio.run_process(
+                    ["op", "item", "get", item, "--format", "json", "--reveal"],
+                    check=False,
+                    env=os.environ | {"OP_SERVICE_ACCOUNT_TOKEN": values["OP_SERVICE_ACCOUNT_TOKEN"]},
+                )
+                if result.returncode != 0:
+                    raise VaultLookupFailed(item, result.stderr.decode())
+                return parse_login(json.loads(result.stdout))
 
 
 def vault_client() -> VaultClient:

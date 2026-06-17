@@ -17,14 +17,14 @@ from dailies import cli, connections
 from dailies.activation import ActivationError, Problem
 from dailies.agent import ClaudeAgentSDKProvider
 from dailies.cli import main
-from dailies.connections import NangoCredential, NotConnected
+from dailies.connections import NangoCredential, NotConnected, WizardCredential
 from dailies.engine import Engine, TriggerFired
 from dailies.gmail import GmailClient, NangoGmailClient
 from dailies.interview import InterviewError
 from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, TaskStatus, WorkflowId
 from dailies.profile import AccountSource, EmailSource, Profile, ProfileNotFound, Sourced, UserSource
 from dailies.web import WebClient
-from tests.fakes import FakeCredentialStore
+from tests.fakes import FakeCredentialStore, FakeIMessage
 
 pytestmark = pytest.mark.unit
 
@@ -166,27 +166,25 @@ def test_auth_gmail_connects_persists_and_verifies(monkeypatch: pytest.MonkeyPat
 
 
 def test_auth_status_unready(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
-    monkeypatch.delenv("BLUEBUBBLES_URL", raising=False)
-    monkeypatch.delenv("BLUEBUBBLES_PASSWORD", raising=False)
     monkeypatch.setattr(connections, "credential_store", lambda: FakeCredentialStore())
     result = CliRunner().invoke(main, ["auth", "status"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
     assert "gmail: not ready — run `dly auth gmail` — used by ActionToolSet, EmailToolSet" in lines
-    assert (
-        "onepassword: not ready — set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`) — used by VaultToolSet"
-    ) in lines
-    assert "bluebubbles: not ready — set BLUEBUBBLES_URL and BLUEBUBBLES_PASSWORD (see `dly auth bluebubbles`)" in lines
+    assert "onepassword: not ready — run `dly auth onepassword` — used by VaultToolSet" in lines
+    assert "bluebubbles: not ready — run `dly auth bluebubbles`" in lines
 
 
 def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NANGO_SECRET_KEY", "secret")
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
-    monkeypatch.setenv("BLUEBUBBLES_URL", "http://mac.tailnet:1234")
-    monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "hunter2")
     store = FakeCredentialStore(
-        credentials={"gmail": NangoCredential(connection_id="conn-1", provider_config_key="google-mail")}
+        credentials={
+            "gmail": NangoCredential(connection_id="conn-1", provider_config_key="google-mail"),
+            "onepassword": WizardCredential(values={"OP_SERVICE_ACCOUNT_TOKEN": "ops_token"}),
+            "bluebubbles": WizardCredential(
+                values={"BLUEBUBBLES_URL": "http://mac.tailnet:1234", "BLUEBUBBLES_PASSWORD": "hunter2"}
+            ),
+        }
     )
     monkeypatch.setattr(connections, "credential_store", lambda: store)
     monkeypatch.setattr(cli, "NangoGmailClient", lambda: NangoGmailClient(credentials=store))
@@ -200,48 +198,46 @@ def test_auth_status_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     lines = result.output.splitlines()
     assert "gmail: connected as yasyfm@gmail.com — used by ActionToolSet, EmailToolSet" in lines
-    assert "onepassword: ready — used by VaultToolSet" in lines
-    assert "bluebubbles: ready" in lines
+    assert "onepassword: configured — used by VaultToolSet" in lines
+    assert "bluebubbles: configured" in lines
 
 
-def test_auth_onepassword_unset_prints_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OP_SERVICE_ACCOUNT_TOKEN", raising=False)
-    result = CliRunner().invoke(main, ["auth", "onepassword"])
-    assert result.exit_code == 1
-    lines = result.output.splitlines()
-    assert "To set up onepassword:" in lines
-    assert "  1. create a 1Password service account with read access to your vaults and copy its token" in lines
-    assert "  2. set OP_SERVICE_ACCOUNT_TOKEN" in lines
-    assert "Error: onepassword is not ready" in result.stderr
-
-
-def test_auth_onepassword_set_reports_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "ops_token")
-    result = CliRunner().invoke(main, ["auth", "onepassword"])
+def test_auth_onepassword_wizard_stores_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FakeCredentialStore()
+    monkeypatch.setattr(cli, "credential_store", lambda: store)
+    result = CliRunner().invoke(main, ["auth", "onepassword"], input="tok\n")
     assert result.exit_code == 0
-    assert result.output == "onepassword: ready\n"
+    assert "onepassword: configured" in result.output
+    assert store.credentials == {"onepassword": WizardCredential(values={"OP_SERVICE_ACCOUNT_TOKEN": "tok"})}
 
 
-def test_auth_bluebubbles_unset_prints_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("BLUEBUBBLES_URL", raising=False)
-    monkeypatch.delenv("BLUEBUBBLES_PASSWORD", raising=False)
-    result = CliRunner().invoke(main, ["auth", "bluebubbles"])
-    assert result.exit_code == 1
-    lines = result.output.splitlines()
-    assert "To set up bluebubbles:" in lines
-    hint = "pair a BlueBubbles server on a Mac (e.g. reachable over Tailscale) and copy its URL and password"
-    assert f"  1. {hint}" in lines
-    assert "  2. set BLUEBUBBLES_URL" in lines
-    assert "  3. set BLUEBUBBLES_PASSWORD" in lines
-    assert "Error: bluebubbles is not ready" in result.stderr
-
-
-def test_auth_bluebubbles_set_reports_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BLUEBUBBLES_URL", "http://mac.tailnet:1234")
-    monkeypatch.setenv("BLUEBUBBLES_PASSWORD", "hunter2")
-    result = CliRunner().invoke(main, ["auth", "bluebubbles"])
+def test_auth_bluebubbles_wizard_stores_and_pings(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FakeCredentialStore()
+    pinged = FakeIMessage()
+    monkeypatch.setattr(cli, "credential_store", lambda: store)
+    monkeypatch.setattr(cli, "imessage_client", lambda: pinged)
+    result = CliRunner().invoke(main, ["auth", "bluebubbles"], input="http://mac.tailnet:1234\nhunter2\n")
     assert result.exit_code == 0
-    assert result.output == "bluebubbles: ready\n"
+    assert "bluebubbles: configured" in result.output
+    assert store.credentials == {
+        "bluebubbles": WizardCredential(
+            values={"BLUEBUBBLES_URL": "http://mac.tailnet:1234", "BLUEBUBBLES_PASSWORD": "hunter2"}
+        )
+    }
+
+
+def test_auth_bluebubbles_wizard_ping_failure_saves_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FakeCredentialStore()
+    monkeypatch.setattr(cli, "credential_store", lambda: store)
+    monkeypatch.setattr(cli, "imessage_client", lambda: FakeIMessage(fail=True))
+    result = CliRunner().invoke(main, ["auth", "bluebubbles"], input="http://mac.tailnet:1234\nhunter2\n")
+    assert result.exit_code == 1
+    assert "could not reach the bluebubbles server" in result.stderr
+    assert store.credentials == {
+        "bluebubbles": WizardCredential(
+            values={"BLUEBUBBLES_URL": "http://mac.tailnet:1234", "BLUEBUBBLES_PASSWORD": "hunter2"}
+        )
+    }
 
 
 def test_db_init_runs() -> None:
@@ -598,7 +594,7 @@ def test_activate_failure_prints_numbered_problems_and_exits_1(monkeypatch: pyte
                 Problem(detail="profile is not seeded", fix="run `dly profile init`"),
                 Problem(
                     detail="integration onepassword is not ready",
-                    fix="set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)",
+                    fix="run `dly auth onepassword`",
                 ),
             ]
         ),
@@ -612,7 +608,7 @@ def test_activate_failure_prints_numbered_problems_and_exits_1(monkeypatch: pyte
         "  2. profile is not seeded",
         "     fix: run `dly profile init`",
         "  3. integration onepassword is not ready",
-        "     fix: set OP_SERVICE_ACCOUNT_TOKEN (see `dly auth onepassword`)",
+        "     fix: run `dly auth onepassword`",
         "Error: 3 problems block activation",
     ]
     assert result.stderr == "Error: 3 problems block activation\n"

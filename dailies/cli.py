@@ -134,6 +134,7 @@ async def connect_integration(integration: NangoIntegration) -> None:
 
 
 async def auth_wizard(integration: WizardIntegration) -> None:
+    click.echo(integration.hint)
     values = {field.key: click.prompt(field.prompt, hide_input=field.secret) for field in integration.fields}
     await credential_store().save(integration.name, WizardCredential(values=values))
     if integration.name == "bluebubbles" and not await imessage_client().ping():

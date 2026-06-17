@@ -208,6 +208,7 @@ def test_auth_onepassword_wizard_stores_credential(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(cli, "credential_store", lambda: store)
     result = CliRunner().invoke(main, ["auth", "onepassword"], input="tok\n")
     assert result.exit_code == 0
+    assert "1Password service account" in result.output
     assert "onepassword: configured" in result.output
     assert store.credentials == {"onepassword": WizardCredential(values={"OP_SERVICE_ACCOUNT_TOKEN": "tok"})}
 

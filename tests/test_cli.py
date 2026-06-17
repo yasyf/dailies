@@ -23,6 +23,7 @@ from dailies.gmail import GmailClient, NangoGmailClient
 from dailies.interview import InterviewError
 from dailies.models import Firing, ManualTrigger, SpendPolicy, TaskId, TaskStatus, WorkflowId
 from dailies.profile import AccountSource, EmailSource, Profile, ProfileNotFound, Sourced, UserSource
+from dailies.refresh import REFRESH_TASK_ID
 from dailies.web import WebClient
 from tests.fakes import FakeCredentialStore, FakeIMessage
 
@@ -292,9 +293,17 @@ def patch_profile_io(
         assert discovered is not None, "discover_profile must not run in this scenario"
         return discovered
 
+    async def fake_seed() -> None:
+        return None
+
+    async def fake_activate(task_id: TaskId, *, ack_gaps: bool, spend_policy: SpendPolicy | None) -> None:
+        return None
+
     monkeypatch.setattr(cli, "load_profile", fake_load)
     monkeypatch.setattr(cli, "save_profile", fake_save)
     monkeypatch.setattr(cli, "discover_profile", fake_discover)
+    monkeypatch.setattr(cli, "seed_refresh_task", fake_seed)
+    monkeypatch.setattr(cli, "activate_task", fake_activate)
     return saved, providers
 
 
@@ -352,6 +361,17 @@ def test_profile_init_mines_reviews_and_saves(monkeypatch: pytest.MonkeyPatch) -
     assert saved == [DISCOVERED]
     assert [type(provider) for provider in providers] == [ClaudeAgentSDKProvider]
     assert providers[0].max_turns == 80
+
+
+def test_profile_init_schedules_weekly_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_profile_io(monkeypatch, existing=None, discovered=DISCOVERED)
+    captured = patch_activate_task(
+        monkeypatch, result=StubTask(uid=REFRESH_TASK_ID, name="Profile refresh", status="active")
+    )
+    result = CliRunner().invoke(main, ["profile", "init"], input="y\n")
+    assert result.exit_code == 0
+    assert "Weekly profile refresh scheduled." in result.output
+    assert captured == {"task_id": REFRESH_TASK_ID, "ack_gaps": True, "spend_policy": None}
 
 
 def test_profile_init_declined_save_aborts(monkeypatch: pytest.MonkeyPatch) -> None:

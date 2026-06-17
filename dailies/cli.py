@@ -44,6 +44,7 @@ from dailies.profile import (
     load_profile,
     save_profile,
 )
+from dailies.refresh import REFRESH_TASK_ID, seed_refresh_task
 from dailies.storage import state_storage
 from dailies.tools import ToolSet
 from dailies.web import web_client
@@ -302,6 +303,9 @@ async def init_profile(*, force: bool = False) -> None:
     click.confirm("Save this profile?", abort=True)
     await save_profile(merged)
     click.echo("Profile saved.")
+    await seed_refresh_task()
+    await activate_task(REFRESH_TASK_ID, ack_gaps=True, spend_policy=None)
+    click.echo("Weekly profile refresh scheduled.")
 
 
 def edit_field(saved: Profile, field: str, value: str) -> Profile:

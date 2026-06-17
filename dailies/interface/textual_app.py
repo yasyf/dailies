@@ -26,7 +26,7 @@ from dailies.interface.rendering import (
     task_header,
     workflow_flow,
 )
-from dailies.interface.screens import InterviewScreen
+from dailies.interface.screens import InterviewScreen, loading
 from dailies.interview import InterviewRunner
 from dailies.models import TaskId, WorkflowId
 from dailies.state import StateDump, dump_state, task_db_key, workflow_db_key
@@ -134,7 +134,8 @@ class ConfirmDeleteScreen(ModalScreen[bool]):
     async def delete(self) -> None:
         self.deleting = True
         self.query_one("#delete", Button).disabled = True
-        await self.presenter.delete_task(self.target.uid)
+        async with loading(self.query_one(Vertical), classes="working"):
+            await self.presenter.delete_task(self.target.uid)
         self.dismiss(True)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
@@ -156,15 +157,14 @@ class TaskListScreen(Screen[None]):
         yield ListView(id="list")
         yield Footer()
 
-    async def on_mount(self) -> None:
-        await self.refresh_tasks()
+    def on_screen_resume(self) -> None:
+        self.refresh_tasks()
 
-    async def on_screen_resume(self) -> None:
-        await self.refresh_tasks()
-
+    @work(exclusive=True, group="load")
     async def refresh_tasks(self) -> None:
-        self.tasks = list(await self.presenter.list_tasks())
         view = self.query_one("#list", ListView)
+        async with loading(self, before=view):
+            self.tasks = list(await self.presenter.list_tasks())
         await view.clear()
         await view.extend(
             ListItem(
@@ -212,15 +212,19 @@ class TaskDetailScreen(DrillScreen):
         yield VerticalScroll(id="detail")
         yield Footer()
 
-    async def on_mount(self) -> None:
-        task = await self.presenter.get_task(self.task_id)
-        workflows = await self.presenter.list_workflows(self.task_id)
-        await self.query_one("#detail", VerticalScroll).mount(
+    def on_mount(self) -> None:
+        self.load()
+
+    @work(exclusive=True, group="load")
+    async def load(self) -> None:
+        detail = self.query_one("#detail", VerticalScroll)
+        async with loading(detail):
+            task = await self.presenter.get_task(self.task_id)
+            workflows = await self.presenter.list_workflows(self.task_id)
+            states = {w.workflow_id: await self.presenter.get_state(w.workflow_id) for w in workflows}
+        await detail.mount(
             task_header(task),
-            *[
-                workflow_flow(WorkflowCard.from_workflow(w), await self.presenter.get_state(w.workflow_id))
-                for w in workflows
-            ],
+            *(workflow_flow(WorkflowCard.from_workflow(w), states[w.workflow_id]) for w in workflows),
         )
         self.sub_title = task.name
 
@@ -258,19 +262,21 @@ class StateScreen(DrillScreen):
         yield VerticalScroll(id="task-state")
         yield Footer()
 
-    async def on_mount(self) -> None:
-        task = await self.presenter.get_task(self.task_id)
+    def on_mount(self) -> None:
+        self.load()
+
+    @work(exclusive=True, group="load")
+    async def load(self) -> None:
         pane = self.query_one("#task-state", VerticalScroll)
-        await pane.mount(
-            *state_widgets("Shared task state", task.shared_ddl, await self.presenter.get_task_state(self.task_id))
-        )
-        for workflow in await self.presenter.list_workflows(self.task_id):
+        async with loading(pane):
+            task = await self.presenter.get_task(self.task_id)
+            task_state = await self.presenter.get_task_state(self.task_id)
+            workflows = await self.presenter.list_workflows(self.task_id)
+            states = {w.workflow_id: await self.presenter.get_state(w.workflow_id) for w in workflows}
+        await pane.mount(*state_widgets("Shared task state", task.shared_ddl, task_state))
+        for workflow in workflows:
             await pane.mount(
-                *state_widgets(
-                    f"{workflow.name} v{workflow.version}",
-                    workflow.ddl,
-                    await self.presenter.get_state(workflow.workflow_id),
-                )
+                *state_widgets(f"{workflow.name} v{workflow.version}", workflow.ddl, states[workflow.workflow_id])
             )
         self.sub_title = task.name
 
@@ -289,10 +295,16 @@ class WorkflowListScreen(DrillScreen):
         yield ListView(id="list")
         yield Footer()
 
-    async def on_mount(self) -> None:
-        self.sub_title = (await self.presenter.get_task(self.task_id)).name
-        self.workflows = list(await self.presenter.list_workflows(self.task_id))
+    def on_mount(self) -> None:
+        self.load()
+
+    @work(exclusive=True, group="load")
+    async def load(self) -> None:
         view = self.query_one("#list", ListView)
+        async with loading(self, before=view):
+            task = await self.presenter.get_task(self.task_id)
+            self.workflows = list(await self.presenter.list_workflows(self.task_id))
+        self.sub_title = task.name
         await view.extend(
             ListItem(
                 Vertical(
@@ -332,11 +344,17 @@ class RunListScreen(DrillScreen):
         yield DataTable(id="runs", cursor_type="row")
         yield Footer()
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         self.sub_title = f"{self.workflow.name} v{self.workflow.version}"
+        self.load()
+
+    @work(exclusive=True, group="load")
+    async def load(self) -> None:
         table = self.query_one("#runs", DataTable)
+        async with loading(self, before=table):
+            runs = await self.presenter.list_runs(self.workflow.workflow_id)
         table.add_columns("status", "fired by", "started")
-        for run in await self.presenter.list_runs(self.workflow.workflow_id):
+        for run in runs:
             table.add_row(
                 run_status_text(run.status),
                 ", ".join(render_firing(firing) for firing in run.fired_by),
@@ -366,10 +384,19 @@ class RunDetailScreen(DrillScreen):
                 yield pane
         yield Footer()
 
-    async def on_mount(self) -> None:
-        run = await self.presenter.get_run(self.run_id)
+    def on_mount(self) -> None:
+        self.load()
+
+    @work(exclusive=True, group="load")
+    async def load(self) -> None:
+        status_pane = self.query_one("#status", VerticalScroll)
+        actions_pane = self.query_one("#actions", VerticalScroll)
+        state_pane = self.query_one("#state", VerticalScroll)
+        async with loading(status_pane), loading(actions_pane), loading(state_pane):
+            run = await self.presenter.get_run(self.run_id)
+            state = await self.presenter.get_state(run.workflow_id)
         self.sub_title = f"run {run.created_at:%Y-%m-%d %H:%M}"
-        await self.query_one("#status", VerticalScroll).mount(
+        await status_pane.mount(
             *(
                 widget
                 for update in run.status_updates
@@ -380,13 +407,10 @@ class RunDetailScreen(DrillScreen):
                 )
             )
         )
-        await self.query_one("#actions", VerticalScroll).mount(
+        await actions_pane.mount(
             *(Static(f"{action.kind} -> {action.target}", markup=False) for action in run.actions)
         )
-        state = await self.presenter.get_state(run.workflow_id)
-        await self.query_one("#state", VerticalScroll).mount(
-            *(Static(state_table(name, rows)) for name, rows in state.items())
-        )
+        await state_pane.mount(*(Static(state_table(name, rows)) for name, rows in state.items()))
 
 
 class DailiesApp(App[None]):

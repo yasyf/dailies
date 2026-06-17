@@ -1,3 +1,14 @@
+LoadingIndicator.loader {
+    height: 1fr;
+    min-height: 3;
+    color: $primary;
+}
+
+LoadingIndicator.working {
+    height: 1;
+    color: $accent;
+}
+
 .badge {
     text-style: bold;
     padding: 0 1;

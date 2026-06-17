@@ -6,7 +6,7 @@ import pytest
 from rich.syntax import Syntax
 from rich.table import Table
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Label, ListView, Static, TabbedContent
+from textual.widgets import Button, DataTable, Label, ListView, LoadingIndicator, Static, TabbedContent
 
 from dailies.interface.textual_app import (
     ConfirmDeleteScreen,
@@ -72,6 +72,37 @@ async def test_task_detail_shows_full_layout() -> None:
         assert tables[0].caption is None
         assert "queue (no rows)" in statics_text(data_pane)
         assert detail.query_one(".flow-terminus", Static)
+
+
+async def test_task_detail_shows_loading_indicator_then_content() -> None:
+    presenter = FakePresenter()
+    started, release = asyncio.Event(), asyncio.Event()
+    get_task = presenter.get_task
+
+    async def blocking_get_task(task_id: TaskId) -> object:
+        started.set()
+        await release.wait()
+        return await get_task(task_id)
+
+    presenter.get_task = blocking_get_task
+    app = make_app(presenter)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        app.push_screen(TaskDetailScreen(presenter, presenter.task.uid))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, TaskDetailScreen)
+        indicator = screen.query_one(LoadingIndicator)
+        assert indicator.region.height > 0
+        assert not screen.query(".task-name")
+
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not screen.query(LoadingIndicator)
+        assert str(screen.query_one(".task-name", Label).render()) == "Daily digest"
 
 
 async def test_state_box_defaults_to_schema_when_no_rows() -> None:

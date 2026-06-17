@@ -1,17 +1,33 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, ClassVar
 
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, Label, Static
+from textual.widgets import Button, Footer, Header, Input, Label, LoadingIndicator, Static
 from textual.worker import Worker, WorkerState
 
 from dailies.interface.rendering import WorkflowCard, ddl_block, workflow_flow
 from dailies.interview import InterviewError, InterviewRunner, persist_proposal
 from dailies.models import Exchange, Interview, TaskProposal, TaskStatus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from textual.widget import Widget
+
+
+@asynccontextmanager
+async def loading(parent: Widget, *, before: Widget | None = None, classes: str = "loader") -> AsyncIterator[None]:
+    indicator = LoadingIndicator(classes=classes)
+    await parent.mount(indicator, before=before)
+    try:
+        yield
+    finally:
+        await indicator.remove()
 
 
 class InterviewScreen(Screen[None]):
@@ -55,6 +71,7 @@ class InterviewScreen(Screen[None]):
 
     @work(exclusive=True, exit_on_error=False, group="interview")
     async def turn(self, interview: Interview) -> None:
+        await self.start_thinking()
         result = await self.runner.next_turn(interview)
         if result.finished:
             self.app.push_screen(ReviewScreen(await self.runner.synthesize(interview)))
@@ -75,7 +92,13 @@ class InterviewScreen(Screen[None]):
         await transcript.mount(Static(text, classes=classes, markup=False))
         transcript.scroll_end(animate=False)
 
+    async def start_thinking(self) -> None:
+        transcript = self.query_one("#transcript", VerticalScroll)
+        await transcript.mount(LoadingIndicator(classes="working"))
+        transcript.scroll_end(animate=False)
+
     def reenable_input(self) -> None:
+        self.query_one(LoadingIndicator).remove()
         answer = self.query_one("#answer", Input)
         answer.disabled = False
         answer.focus()
@@ -133,7 +156,8 @@ class ReviewScreen(Screen[None]):
 
     @work(exclusive=True, exit_on_error=False, group="persist")
     async def persist(self, *, status: TaskStatus) -> None:
-        task = await persist_proposal(self.proposal, status=status)
+        async with loading(self.query_one("#review", VerticalScroll), classes="working"):
+            task = await persist_proposal(self.proposal, status=status)
         self.notify(f"Saved “{task.name}” as {status}.", markup=False)
         self.close_review()
 

@@ -6,53 +6,49 @@
 [![Python](https://img.shields.io/pypi/pyversions/dly.svg)](https://pypi.org/project/dly/)
 [![License: PolyForm-NC-1.0.0](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-blue.svg)](https://github.com/yasyf/dailies/blob/main/LICENSE)
 
-Daily automation and scheduled task runner.
+Daily automation and scheduled task runner — your recurring jobs on one schedule.
 
 `dailies` runs the recurring jobs that make up your day — backups, digests,
 syncs, reports — on a single schedule you define once. It's a thin, scriptable
 layer over cron: every task is plain Python, runs are idempotent per date, and
-re-running a missed day picks up exactly where the schedule left off.
+re-running a missed day picks up exactly where the schedule left off. One
+version-controlled schedule replaces a tangle of crontab lines, and the `dly run`
+you schedule is the one you debug by hand.
 
 ## Install
-
-No install needed — run everything through [uvx](https://docs.astral.sh/uv/):
 
 ```bash
 uvx dly --help
 ```
 
-`uvx` fetches dailies into a throwaway environment and runs it. To add it
-to a project instead:
-
-```bash
-uv add dly
-```
-
-## Commands
+## Quickstart
 
 `dailies` stores its tasks, workflows, and runs in MongoDB; per-workflow and
 per-task state lives in local SQLite databases under `DAILIES_STATE_DIR`. Point
 it at a database, then drive it:
 
 ```bash
-uvx dly db init             # connect to MongoDB and create indexes
-uvx dly run <workflow-id>   # fire a single manual run of a workflow now
-uvx dly tick                # sweep cron-due workflows and poll subscriptions; safe to overlap
-uvx dly tui                 # browse tasks → workflows → runs and current state
+$ uvx dly db init
+connected to mongodb://localhost:27017/dailies — indexes created
 ```
 
-`dly tick` is meant to be driven by a scheduler entry (system cron or launchd) on
-a ~1-minute cadence. Overlapping ticks are safe — even across machines sharing one
-MongoDB — because each workflow is processed under a short database lease: a
-concurrent tick skips in-flight workflows and processes the rest.
+Then schedule `dly tick` from system cron or launchd on a ~1-minute cadence; it
+sweeps cron-due workflows and polls subscriptions. Overlapping ticks are safe —
+even across machines sharing one MongoDB — so you never need to guard the entry.
 
-Delivery is at-least-once. A duplicate run happens only when a lease holder dies
-or stalls past the lease TTL (~3 minutes — a crash or a long laptop sleep
-mid-run), and the re-fired batch may carry a different set of occurrences than
-the original if more events arrived in between. Workflow state (SQLite databases,
-connections, browser profiles) is host-local, so while tick *dispatch* is
-multi-host-safe, a workflow's memory does not follow it across machines — keep
-all scheduler entries on one host until remote state storage lands.
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `dly db init` | Connect to MongoDB and create indexes |
+| `dly run <workflow-id>` | Fire a single manual run of a workflow now |
+| `dly tick` | Sweep cron-due workflows and poll subscriptions; safe to overlap |
+| `dly tui` | Browse tasks → workflows → runs and current state |
+| `dly auth <name>` | Connect a per-integration credential (e.g. `gmail`, `onepassword`, `bluebubbles`) |
+| `dly browser import-cookies <id>` | Seed a workflow's browser profile with existing logins |
+| `dly interview` | Run the onboarding interview to define workflows |
+
+Run `dly --help` or any subcommand with `--help` for the full flag list.
 
 ## Configuration
 
@@ -93,51 +89,21 @@ Running a workflow (`dly run`, `dly tick`) or the onboarding interview (`dly
 interview`, or the interview launched from inside `dly tui`) drives an agent through
 the Claude Agent SDK. The Claude Code CLI it relies on ships bundled with
 `claude-agent-sdk` — no separate install — but it runs as a Node.js subprocess, so a
-Node.js runtime and a valid `ANTHROPIC_API_KEY` must be present at run time. Importing
-the package needs neither.
+Node.js runtime and a valid `ANTHROPIC_API_KEY` must be present at run time.
 
 ### Browser tools
 
-Workflow agents get web access in three tiers:
+Workflow agents get web access in three tiers. With Claude-in-Chrome enabled (the
+one-time `/chrome` setup in `claude`, see the
+[Claude in Chrome](https://code.claude.com/docs/en/chrome) docs), agents drive your
+real, logged-in Chrome. Without it, agents get a `browse(task)` tool backed by an
+autonomous [browser-use](https://browser-use.com) agent — provision its Chromium
+once with `uvx browser-use install`, and seed per-workflow logins with `dly browser
+import-cookies <workflow-id> --domain example.com` (run `dly browser --help` for the
+flags). Always on are `search_web` (Exa), `fetch_url` (plain HTTP), and `scrape` (a
+single-page [Stagehand](https://stagehand.dev) extraction; override its Chrome with
+`CHROME_PATH`).
 
-- **Claude-in-Chrome.** When Claude-in-Chrome is enabled — the one-time
-  interactive `/chrome` setup in `claude` (see the
-  [Claude in Chrome](https://code.claude.com/docs/en/chrome) docs) — workflow
-  agents launch with `--chrome` and drive your real, logged-in Chrome through
-  the native browser tools. Chrome must be running with the extension connected
-  when workflows fire, and chrome runs authenticate via your Claude
-  subscription browser login: API-key auth silently disables the chrome bridge,
-  so `ANTHROPIC_API_KEY` is blanked for those agent subprocesses.
-- **`browse` (browser-use).** Without Chrome, agents instead get a `browse(task)`
-  tool that runs an autonomous [browser-use](https://browser-use.com) agent in a
-  headless browser. Provision its Chromium once with `uvx browser-use install`.
-  Each workflow keeps its own profile — cookies and localStorage persist across
-  runs as a Playwright `storage_state` blob saved through the same `StateStorage`
-  layer as the SQLite state (`browser/<workflow_id>.json`), so it carries over to
-  a remote (Modal) backend unchanged. The backend is chosen by
-  `DAILIES_BROWSER_BACKEND` (default `local`; Browserbase and Anchor are the
-  planned remote drop-ins, reached over CDP).
+## License
 
-  Seed a workflow's profile with existing logins using
-  `dly browser import-cookies <workflow-id> --domain example.com` — `--domain` is
-  required and repeatable, and matches subdomains. Cookies come from a local
-  browser (`--from-browser chrome|firefox|safari|edge|brave|…`, default `chrome`;
-  reading Chrome triggers a macOS keychain prompt) or from a previously exported
-  file (`--from-file`, either a Playwright `storage_state` JSON or a Netscape
-  `cookies.txt`). Imported cookies feed only the `browse` tool — under
-  Claude-in-Chrome the agent uses your real Chrome profile instead.
-- **`search_web` / `fetch_url` / `scrape` (always on).** Quick Exa search, a plain
-  HTTP fetch, and a single-page [Stagehand](https://stagehand.dev) extraction in a
-  fresh anonymous headless browser. `scrape` uses your installed Chrome
-  (override the binary with `CHROME_PATH`).
-
-## What problems does this solve?
-
-- **Scattered cron entries.** One schedule, defined in code and version-controlled,
-  instead of a tangle of crontab lines across machines.
-- **Re-running a missed day.** Runs are keyed by date and idempotent, so backfilling
-  a skipped day is a single command — no double-sends, no manual cleanup.
-- **Opaque failures.** Every task is plain Python with structured logging, so a
-  failed run tells you which task broke and why.
-- **Local-first testing.** The same `dly run` you schedule is the one you run by
-  hand, so there's no separate path to debug.
+[PolyForm Noncommercial 1.0.0](LICENSE).

@@ -2,7 +2,7 @@
 name = "dly"
 # Inert sentinel: the real version is stamped from the release tag (uv version --frozen).
 version = "0.0.0"
-description = "Daily automation and scheduled task runner."
+description = "Stop being your own cron job."
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]

@@ -1,0 +1,5 @@
+fragments = [
+  "dailies-development-guide",
+  "cc-skills:ccx",
+  "python-style",
+]

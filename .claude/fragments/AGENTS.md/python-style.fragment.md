@@ -35,7 +35,3 @@ Target Python 3.14. Run `uv sync --extra dev`, `uv run pytest`, and `uv build`.
 **Mechanical linting.** CI and hooks handle formatting and import order. Leave `ruff` to them and fix only what needs human judgment. When reviewing code, don't flag mechanical lint violations (line length, whitespace, import order, trailing commas).
 
 **Testing.** The suite lives in `tests/`; run it with `uv run pytest`. Use strict assertions and mock external dependencies while leaving the code under test real.
-
-**Git.** Commits should be atomic and scoped. One logical change per commit.
-
-**Releases.** Tagging `v*` triggers `.github/workflows/release-pypi.yml`, which builds, publishes to PyPI via trusted publishing, and cuts a GitHub release. The version comes from the tag.

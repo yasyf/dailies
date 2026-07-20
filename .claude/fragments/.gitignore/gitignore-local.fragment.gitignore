@@ -1,0 +1,6 @@
+# Local environment
+scratch/
+*.sqlite*
+
+# Great Docs build output
+great-docs/

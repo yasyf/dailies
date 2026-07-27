@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 RELEASE = (Path(__file__).parents[1] / ".github" / "workflows" / "release-pypi.yml").read_text()
-PYPI_BUILD_SHA = "7cc8a6c981cbec10fcb7f19bd75b36e9ee65ea7e"
+PYPI_BUILD_SHA = "41f8de6765b3b833ef333b0b98f5683f0e46685b"
 PYPI_PUBLISH_SHA = "ba38be9e461d3875417946c167d0b5f3d385a247"
 
 
